@@ -1,0 +1,57 @@
+[package]
+name = "apsophos"
+description = "Photo noise reduction with the SCUNet neural network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "apsophos"
+path = "src/main.rs"
+
+[features]
+# DirectML: GPU on any DirectX 12 card (NVIDIA RTX included), nothing to install.
+# TensorRT for RTX: about 4 times faster on RTX 30xx and later, used when its
+# libraries are installed (otherwise DirectML is used).
+# On Linux build with `--no-default-features`.
+default = ["directml", "nvrtx"]
+directml = ["denoise_engine/directml"]
+# TensorRT for RTX (RTX 30xx and later), half precision with the _fp16 models
+nvrtx = ["denoise_engine/nvrtx"]
+
+[dependencies]
+denoise_core.workspace = true
+denoise_io.workspace = true
+denoise_engine.workspace = true
+denoise_platform.workspace = true
+anyhow.workspace = true
+rayon.workspace = true
+serde.workspace = true
+eframe = { version = "0.37", features = ["persistence"] }
+rfd = "0.17"
+dirs = "6"
+# the upscaling models, downloaded only when the user asks: HTTPS through
+# Windows' own TLS and certificate store (SChannel), and their SHA-256
+ureq = { version = "3.5", default-features = false, features = ["native-tls-no-default"] }
+sha2 = "0.10"
+# the system language, to pick the interface language
+sys-locale = "0.3"
+opener = { version = "0.7", features = ["reveal"] }
+# available memory, to refuse images that would not fit before decoding them
+sysinfo = { version = "0.38", default-features = false, features = ["system", "disk"] }
+# colour management of the viewer (Little CMS, built from source)
+lcms2 = { version = "6.2", features = ["static"] }
+# log file
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
+tracing-appender = "0.2"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+egui_kittest = { version = "0.37", features = ["eframe", "wgpu", "snapshot"] }
+tempfile = "3"

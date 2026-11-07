@@ -1,0 +1,24 @@
+# Secrets: never in the repository
+.env
+.env.*
+*.pem
+*.key
+token*.txt
+
+# Build output
+dist/
+target/
+bin/
+obj/
+
+# This computer only (local paths, notes)
+/CLAUDE.local.md
+
+# Models: generated from the original weights, too large for the repository
+/models/*.onnx
+/models/*.pth
+/models/*.part*
+
+# Logs and temporary files
+/_log
+*.tmp

@@ -1,0 +1,8 @@
+# Compiler options of the project, versioned here rather than in environment
+# variables. The scripts add only the path remapping, which depends on this
+# computer (CLAUDE.md, exceptions); Cargo joins the two lists.
+
+# Windows executables (and the test programs, built the same way) with
+# Control Flow Guard and compatible with CET shadow stacks.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "control-flow-guard", "-C", "link-arg=/CETCOMPAT"]

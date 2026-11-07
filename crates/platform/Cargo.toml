@@ -1,0 +1,29 @@
+[package]
+name = "denoise_platform"
+description = "Apsophos: the few operating-system calls the standard library does not offer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# Not the workspace lints, which forbid `unsafe`: the Windows calls need it.
+# Here `unsafe` is denied except where a function says why, every unsafe
+# block needs a SAFETY comment, and the clippy settings are the workspace's.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+unwrap_used = "warn"
+expect_used = "warn"

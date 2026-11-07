@@ -1,0 +1,25 @@
+Apsophos - additional permission under GNU GPL version 3 section 7
+
+Copyright (C) 2026 MR
+
+Apsophos is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, version 3 of the License (see LICENSE).
+
+Additional permission under GNU GPL version 3 section 7
+
+If you modify this Program, or any covered work, by linking or combining it
+with NVIDIA TensorRT for RTX or Microsoft DirectML (or a modified version of
+those libraries), containing parts covered by the terms of the NVIDIA
+TensorRT for RTX licence or the Microsoft DirectML licence terms, the
+licensors of this Program grant you additional permission to convey the
+resulting work.
+
+This permission covers only those two libraries. It does not change the
+terms of the libraries themselves: they remain under their own licences
+(see THIRD-PARTY-NOTICES.txt in the package), and anyone who conveys them
+must respect those licences too.
+
+You may remove this additional permission from your copy of the Program, or
+from modified versions of it, as section 7 of the GNU GPL allows; if you do,
+you may no longer convey the work combined with those libraries.

@@ -1,0 +1,43 @@
+Apsophos includes or uses the following third-party components.
+Apsophos itself is GPL-3.0-only; LICENSE-EXCEPTION.txt allows
+conveying it together with DirectML and TensorRT for RTX below.
+
+SCUNet (neural network and its weights)
+  K. Zhang et al., "Practical Blind Image Denoising via Swin-Conv-UNet and
+  Data Synthesis". Weights from https://github.com/cszn/KAIR (v1.0),
+  converted to ONNX. Licence: Apache License 2.0 (licenses/Apache-2.0.txt).
+
+ONNX Runtime (statically linked, and onnxruntime_providers_*.dll)
+  Copyright (c) Microsoft Corporation. https://github.com/microsoft/onnxruntime
+  Licence: MIT (licenses/MIT-onnxruntime.txt). Built by the ort project
+  (https://ort.pyke.io, MIT/Apache-2.0).
+
+DirectML (DirectML.dll)
+  Copyright (c) Microsoft Corporation. Redistributed under the Microsoft
+  DirectML licence terms: https://www.nuget.org/packages/Microsoft.AI.DirectML
+
+NVIDIA TensorRT for RTX 1.4 (tensorrt_rtx_1_4.dll,
+tensorrt_onnxparser_rtx_1_4.dll)
+  Copyright (c) NVIDIA Corporation. Proprietary software, redistributed as
+  part of this application under the NVIDIA TensorRT for RTX licence:
+  https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/reference/sla.html
+  These DLLs may only be used by this application.
+
+Little CMS 2 (colour management, statically linked)
+  Copyright (c) Marti Maria Saguer. https://www.littlecms.com
+  Licence: MIT (licenses/MIT-lcms2.txt). Rust bindings: lcms2 crate (MIT).
+
+egui / eframe (user interface)
+  https://github.com/emilk/egui. Licence: MIT or Apache-2.0.
+
+Segoe UI and Segoe MDL2 Assets (fonts)
+  Read from the Windows fonts folder at run time; not shipped.
+
+Inter (font)
+  Copyright The Inter Project Authors. Licence: SIL Open Font License 1.1
+  (licenses/OFL-1.1.txt).
+
+Other Rust libraries (image, tiff, jpeg-encoder, rayon, serde, rfd, tracing,
+sysinfo, ...)
+  Licences: MIT, Apache-2.0 or compatible. The full list is in Cargo.lock in
+  the source code.

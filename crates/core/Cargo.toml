@@ -1,0 +1,16 @@
+[package]
+name = "denoise_core"
+description = "Apsophos core: images, tiles, luminance/colour blending"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+rayon.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

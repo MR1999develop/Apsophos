@@ -1,0 +1,29 @@
+[package]
+name = "denoise_io"
+description = "TIFF, JPEG and PNG reading and writing with ICC profile, EXIF/XMP and original bit depth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+denoise_core.workspace = true
+denoise_platform.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "rayon"] }
+tiff = "0.9"
+jpeg-encoder = "0.6"
+# PNG writing with EXIF, XMP and resolution (the `image` encoder writes none)
+png = "0.18"
+# the MD5 that names the extended XMP of a JPEG
+md-5 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+# random and damaged input for the parsers of this crate
+proptest = "1"
+
+[lints]
+workspace = true

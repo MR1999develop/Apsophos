@@ -1,0 +1,83 @@
+name: Models
+
+# Builds the upscaling models that the program downloads when the user asks
+# (models/upscalers.txt) from the SwinIR weights, checks that every file has
+# exactly the size and SHA-256 the program expects, and attaches them to the
+# DRAFT release models-1, which is published by hand. Only by hand:
+# Actions ▸ Models ▸ Run workflow. The installer does not carry them.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  models:
+    runs-on: windows-latest
+    # writing only for the draft release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # the converter accepts only the four weights files whose SHA-256 it
+      # knows, and reads only tensors from them
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        shell: pwsh
+        run: |
+          python -m pip install --quiet numpy
+          $base = 'https://github.com/JingyunLiang/SwinIR/releases/download/v0.0'
+          $weights = @(
+            '003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x2_PSNR.pth',
+            '003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x2_GAN.pth',
+            '003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_PSNR.pth',
+            '003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth'
+          )
+          New-Item -ItemType Directory -Force out | Out-Null
+          foreach ($w in $weights) {
+            $file = Join-Path $env:RUNNER_TEMP $w
+            Invoke-WebRequest "$base/$w" -OutFile $file
+            python tools/export_upscaler_model.py --weights $file --output-dir out
+            if ($LASTEXITCODE) { throw "conversion of $w failed" }
+          }
+          python tools/make_fp16_model.py 'out/*.onnx'
+          if ($LASTEXITCODE) { throw "FP16 conversion failed" }
+
+      # the program refuses any file that differs: so does the workflow
+      - name: Check against models/upscalers.txt
+        shell: pwsh
+        run: |
+          $n = 0
+          foreach ($line in Get-Content models/upscalers.txt) {
+            if ($line -notmatch '^([0-9a-f]{64}) (\d+) (\S+)$') { continue }
+            $file = Join-Path out $Matches[3]
+            if (-not (Test-Path $file)) { throw "$($Matches[3]) was not built" }
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -ne $Matches[1] -or (Get-Item $file).Length -ne [long]$Matches[2]) {
+              throw "$($Matches[3]) differs from models/upscalers.txt (SHA-256 $hash)"
+            }
+            $n++
+          }
+          if ($n -eq 0) { throw 'no model listed in models/upscalers.txt' }
+          "$n models match models/upscalers.txt"
+
+      - name: Draft release models-1
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: models-1
+          name: Upscaling models 1
+          draft: true
+          body: >-
+            The upscaling models Apsophos downloads when the user presses
+            "Download the models": SwinIR real-world super-resolution
+            (github.com/JingyunLiang/SwinIR, Apache-2.0), 2x SwinIR-M and 4x
+            SwinIR-L, faithful (psnr) and generated detail (gan), FP16, in
+            two tile sizes. The program checks each file against
+            models/upscalers.txt.
+          files: out/*_fp16.onnx
+          fail_on_unmatched_files: true
