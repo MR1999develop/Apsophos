@@ -41,7 +41,7 @@ sha2 = "0.10"
 sys-locale = "0.3"
 opener = { version = "0.7", features = ["reveal"] }
 # available memory, to refuse images that would not fit before decoding them
-sysinfo = { version = "0.38", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 # colour management of the viewer (Little CMS, built from source)
 lcms2 = { version = "6.2", features = ["static"] }
 # log file
