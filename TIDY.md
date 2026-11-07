@@ -97,6 +97,11 @@ Updated on November 2, 2026 (translated into English on November 7).
   local check calls them from `check.ps1`; a shared `cargo xtask check`
   would guarantee they are the same. The release workflow lacks
   `cargo auditable build` (dependencies readable from the binary).
+  They also differ in the build: `check.bat` tests in release, the CI in
+  debug, where egui's debug assertions run. On November 7 two font tests
+  passed locally and failed in the CI (an undrained `TexturesDelta`);
+  until the shared command exists, run `cargo test --workspace` (debug)
+  too before publishing a branch that touches egui code.
 
 ## Enlargement (November 5)
 

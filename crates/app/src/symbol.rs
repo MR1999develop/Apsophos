@@ -57,7 +57,9 @@ mod tests {
     use eframe::egui::{self, FontFamily, FontId};
 
     fn has_all(ctx: &egui::Context, pick: impl Fn(super::Icon) -> &'static str) {
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        // one frame loads the fonts; its texture updates have no renderer
+        // here, and egui asserts (in debug builds) that none is dropped
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
         let font = FontId::proportional(14.0);
         for &icon in super::ALL {
             let c = pick(icon).chars().next().unwrap_or_default();
