@@ -1,12 +1,23 @@
 # Apsophos — status of the work
 
-Updated on November 5, 2026 (language and workflow rows on November 7). It
-is where work resumes: last checked commit, work in progress, open points,
-decisions. Small postponed things are in `TIDY.md`.
+Updated on November 5, 2026 (language and workflow rows on November 7,
+release rows on November 8). It is where work resumes: last checked commit,
+work in progress, open points, decisions. Small postponed things are in
+`TIDY.md`.
 
 ## Last checked commit
 
-- `main` @ the merge of branch `docs-english` (November 7: status and TIDY
+- `main` @ the merge of branch `release-package-2026-11-08` (November 8):
+  the first release run (tag `v0.1.0`) failed at the winget step because
+  `package.bat nonvidia` asked for `onnxruntime_providers_shared.dll`,
+  which only the TensorRT for RTX build makes, and then exited with 0
+  without a package. Now the DLL is required only with NVIDIA and the
+  script exits with 1 when it makes nothing or only part. Checked by
+  building the DirectML-only package locally and running its self-test
+  (DirectML on the GPU, then the CPU). The repository was published on
+  November 7 as one signed commit; `models-1` was built by the Models
+  workflow on November 8 (draft, published by the owner).
+- Before: the merge of branch `docs-english` (November 7: status and TIDY
   in English, documents only): `scripts\check.bat` all green (156 tests,
   cargo-deny). Merged without branch CI, with the owner's consent: GitHub
   did not start the jobs (account billing, see *Open points*).

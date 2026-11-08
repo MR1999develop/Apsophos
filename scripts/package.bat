@@ -17,6 +17,7 @@ cd /d "%~dp0\.."
 if not exist target mkdir target
 set NVIDIA=1
 set FULL=
+set FAILED=0
 for %%A in (%*) do (
   if /i "%%~A"=="nonvidia" set NVIDIA=
   if /i "%%~A"=="full" set FULL=1
@@ -34,20 +35,24 @@ echo Packaging %NAME%...
 
 echo [1/4] Checking the build...
 set MISSING=
-for %%F in (apsophos.exe DirectML.dll onnxruntime_providers_shared.dll) do (
+rem DirectML is built into the program; the shared providers DLL only loads
+rem TensorRT for RTX, and a DirectML-only build does not make it
+for %%F in (apsophos.exe DirectML.dll) do (
   if not exist target\release\%%F call set MISSING=%%MISSING%% %%F
 )
-if defined NVIDIA for %%F in (onnxruntime_providers_nv_tensorrt_rtx.dll tensorrt_rtx_1_4.dll tensorrt_onnxparser_rtx_1_4.dll) do (
+if defined NVIDIA for %%F in (onnxruntime_providers_shared.dll onnxruntime_providers_nv_tensorrt_rtx.dll tensorrt_rtx_1_4.dll tensorrt_onnxparser_rtx_1_4.dll) do (
   if not exist target\release\%%F call set MISSING=%%MISSING%% %%F
 )
 if defined MISSING (
   call echo     Missing in target\release:%%MISSING%%
   echo     Run scripts\check.bat first ^(with TensorRT for RTX 1.4 extracted in C:\TensorRT-RTX-1.4...^),
   echo     or use "scripts\package.bat nonvidia" for a package without the NVIDIA DLLs.
+  set FAILED=1
   goto end
 )
 if not exist models\scunet_color_real_448.onnx (
   echo     models\scunet_color_real_448.onnx is missing: see models\README.txt
+  set FAILED=1
   goto end
 )
 
@@ -56,8 +61,8 @@ if exist "%OUT%" rd /s /q "%OUT%"
 mkdir "%OUT%\models" "%OUT%\licenses"
 copy /y target\release\apsophos.exe "%OUT%\" >nul
 copy /y target\release\DirectML.dll "%OUT%\" >nul
-copy /y target\release\onnxruntime_providers_shared.dll "%OUT%\" >nul
 if defined NVIDIA (
+  copy /y target\release\onnxruntime_providers_shared.dll "%OUT%\" >nul
   copy /y target\release\onnxruntime_providers_nv_tensorrt_rtx.dll "%OUT%\" >nul
   copy /y target\release\tensorrt_rtx_1_4.dll "%OUT%\" >nul
   copy /y target\release\tensorrt_onnxparser_rtx_1_4.dll "%OUT%\" >nul
@@ -93,6 +98,7 @@ for %%Z in ("dist\%NAME%.zip") do if exist "%%~fZ" (
   powershell -NoProfile -Command "'  zip: %%~fZ, {0:N0} MB' -f (%%~zZ / 1MB)"
 ) else (
   echo     the zip could not be made ^(details in target\package.log^)
+  set FAILED=1
 )
 (echo %NAME% & dir /b /s "%OUT%") >> target\package.log
 
@@ -105,6 +111,7 @@ if defined ISCC (
   "%ISCC%" /Q /DAppVersion=%VERSION% "/DSourceDir=%CD%\%OUT%" "/DOutputBase=%NAME%-setup" packaging\apsophos.iss >>target\package.log 2>&1
   if errorlevel 1 (
     echo     the installer could not be made ^(details in target\package.log^)
+    set FAILED=1
   ) else (
     echo   installer: %CD%\dist\%NAME%-setup.exe
   )
@@ -115,5 +122,6 @@ if defined ISCC (
 :end
 echo.
 pause
-goto :eof
+rem exit code 1 when nothing or only part was made, so a workflow stops here
+exit /b %FAILED%
 
