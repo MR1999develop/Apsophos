@@ -473,6 +473,15 @@ pub struct About {
     pub version: fn(&str) -> String,
     pub network: &'static str,
     pub credits: &'static str,
+    /// The Models section: each network's card and its files.
+    pub models: &'static str,
+    pub model_source: &'static str,
+    pub model_licence: &'static str,
+    pub model_training: &'static str,
+    pub model_files: &'static str,
+    pub model_not_installed: &'static str,
+    /// `D:\models: a.onnx, b.onnx`, from the folder and the names.
+    pub model_folder: fn(&str, &str) -> String,
 }
 
 /// File dialogs.
@@ -942,6 +951,13 @@ pub static EN: Texts = Texts {
                   licence). Colour management: Little CMS (MIT). Interface: egui (MIT/Apache-2.0). Fonts: Segoe UI \
                   and Segoe MDL2 Assets from Windows, Inter (SIL OFL \
                   1.1). Details in THIRD-PARTY-NOTICES.txt.",
+        models: "Models",
+        model_source: "Source",
+        model_licence: "Licence",
+        model_training: "Trained on",
+        model_files: "Installed",
+        model_not_installed: "not installed",
+        model_folder: |folder, names| format!("{folder}: {names}"),
     },
     dialogs: Dialogs {
         open_image: "Open image",
@@ -1413,6 +1429,13 @@ pub static IT: Texts = Texts {
         credits: "Inferenza: ONNX Runtime (MIT) con DirectML (licenza Microsoft) e NVIDIA TensorRT for RTX (licenza \
                   NVIDIA). Gestione del colore: Little CMS (MIT). Interfaccia: egui (MIT/Apache-2.0). Caratteri: \
                   Segoe UI e Segoe MDL2 Assets di Windows, Inter (SIL OFL 1.1). Dettagli in THIRD-PARTY-NOTICES.txt.",
+        models: "Modelli",
+        model_source: "Fonte",
+        model_licence: "Licenza",
+        model_training: "Addestrato su",
+        model_files: "Installato",
+        model_not_installed: "non installato",
+        model_folder: |folder, names| format!("{folder}: {names}"),
     },
     dialogs: Dialogs {
         open_image: "Apri immagine",

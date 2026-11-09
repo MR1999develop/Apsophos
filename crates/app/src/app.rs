@@ -263,6 +263,8 @@ pub struct ApsophosApp {
     title: String,
     /// Where F6 moves the focus.
     pub panes: crate::ui::PaneTargets,
+    /// The networks and their files, read when the About window opens.
+    pub model_list: Option<Vec<crate::model_list::ListedModel>>,
 }
 
 impl ApsophosApp {
@@ -305,6 +307,7 @@ impl ApsophosApp {
             hint: None,
             title: String::new(),
             panes: crate::ui::PaneTargets::default(),
+            model_list: None,
         };
         app.offer_upscalers();
         match files.as_slice() {

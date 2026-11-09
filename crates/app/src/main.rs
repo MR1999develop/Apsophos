@@ -11,6 +11,7 @@ mod format;
 mod history;
 mod inspect;
 mod logging;
+mod model_list;
 mod network_space;
 mod platform;
 mod resources;

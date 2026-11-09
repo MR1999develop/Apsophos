@@ -234,6 +234,25 @@ fn queue_context_menu_opens_an_item() {
 }
 
 #[test]
+fn the_about_window_lists_the_models() {
+    let mut h = harness();
+    h.state_mut().windows.about = true;
+    h.run_steps(3);
+    let denoiser = denoise_engine::DENOISER_CARD;
+    assert!(h.query_by_label(denoiser.network).is_none(), "the section starts closed");
+    h.get_by_label(tr().about.models).click();
+    h.run_steps(3);
+    h.get_by_label(denoiser.network);
+    h.get_by_label(denoiser.source);
+    assert_eq!(h.get_all_by_label(tr().about.model_files).count(), 3, "denoising, 2× and 4×");
+    // closing the window forgets the files read, so the next opening reads them again
+    assert!(h.state().model_list.is_some());
+    h.state_mut().windows.about = false;
+    h.run_steps(2);
+    assert!(h.state().model_list.is_none());
+}
+
+#[test]
 fn a_heavily_compressed_jpeg_is_pointed_out() {
     let dir = tempfile::tempdir().unwrap();
     let png = sample_png(dir.path(), "source.png");

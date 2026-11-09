@@ -47,6 +47,16 @@ use thiserror::Error;
 
 use gpu_error::GpuProblem;
 
+/// What the interface says about the denoising network: the weights are
+/// KAIR's `scunet_color_real_psnr.pth`, converted to ONNX by
+/// `tools/export_onnx_model.py`.
+pub const DENOISER_CARD: ModelCard = ModelCard {
+    network: "SCUNet, blind denoising of real photos",
+    source: "github.com/cszn/KAIR, release v1.0 (scunet_color_real_psnr)",
+    licence: "Apache-2.0",
+    training_data: "clean photos with synthesised noise, camera noise and JPEG compression included",
+};
+
 /// File name of the model looked up in the model folders.
 pub const MODEL_FILE: &str = "scunet_color_real_448.onnx";
 /// Side of the input tile of the default model.

@@ -179,6 +179,16 @@ impl ApsophosApp {
         self.windows.shortcuts = open;
 
         let mut open = self.windows.about;
+        // the model folders are read once per opening, not on every frame
+        let models = if open {
+            let settings = &self.settings;
+            self.model_list
+                .get_or_insert_with(|| crate::model_list::list(&settings.denoiser_files(), &settings.upscaler_files()))
+                .clone()
+        } else {
+            self.model_list = None;
+            Vec::new()
+        };
         let title = (tr().menu.about)(product::NAME);
         widgets::dialog(ctx, title).open(&mut open).resizable(false).show(ctx, |ui| {
             ui.label(RichText::new(product::NAME).size(FONT_TITLE).family(semibold()).color(t.text));
@@ -187,6 +197,11 @@ impl ApsophosApp {
             ui.add_space(SPACE_M);
             ui.label(ta.network);
             ui.label(ta.credits);
+            ui.add_space(SPACE_S);
+            egui::CollapsingHeader::new(group_title(ta.models, &t))
+                .id_salt("about-models")
+                .default_open(false)
+                .show(ui, |ui| model_cards(ui, &t, &models));
         });
         self.windows.about = open;
     }
@@ -244,6 +259,40 @@ impl ApsophosApp {
             self.preview = UpscalePreview::None;
         }
         self.windows.upscale_preview = open;
+    }
+}
+
+/// The Models section of the About window: for each network its card and
+/// where its files are.
+fn model_cards(ui: &mut egui::Ui, t: &Tokens, models: &[crate::model_list::ListedModel]) {
+    let ta = &tr().about;
+    for (n, m) in models.iter().enumerate() {
+        if n > 0 {
+            ui.add_space(SPACE_M);
+        }
+        ui.label(group_title(m.card.network, t));
+        let files = if m.folders.is_empty() {
+            ta.model_not_installed.to_owned()
+        } else {
+            m.folders
+                .iter()
+                .map(|(dir, names)| (ta.model_folder)(&dir.display().to_string(), &names.join(", ")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let rows = [
+            (ta.model_source, m.card.source.to_owned()),
+            (ta.model_licence, m.card.licence.to_owned()),
+            (ta.model_training, m.card.training_data.to_owned()),
+            (ta.model_files, files),
+        ];
+        egui::Grid::new(("about-model", n)).num_columns(2).spacing(vec2(SPACE_M, SPACE_XS)).show(ui, |ui| {
+            for (k, v) in rows {
+                ui.label(weak(k, t));
+                ui.add(egui::Label::new(RichText::new(v).color(t.text)).wrap());
+                ui.end_row();
+            }
+        });
     }
 }
 

@@ -199,6 +199,14 @@ impl Settings {
         found.sort();
         found
     }
+
+    /// The denoising model files in use: [`Self::model_set`] and the
+    /// half-precision variants next to them.
+    pub fn denoiser_files(&self) -> Vec<PathBuf> {
+        let set = self.model_set();
+        let half: Vec<PathBuf> = set.iter().map(|p| denoise_engine::fp16_variant(p)).filter(|p| p.is_file()).collect();
+        set.into_iter().chain(half).collect()
+    }
 }
 
 #[cfg(test)]
