@@ -29,7 +29,8 @@ pub mod gpu_error;
 mod upscaler;
 
 pub use upscaler::{
-    card, upscaler_file_kind, upscaler_files, ModelCard, Upscaler, UpscalerFile, UpscalerTile, UPSCALE_MARGIN_PX,
+    card, upscaler_file_kind, upscaler_files, ModelCard, UpscaleSpeed, Upscaler, UpscalerFile, UpscalerTile,
+    UPSCALE_MARGIN_PX,
 };
 
 use std::num::NonZeroUsize;

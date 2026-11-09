@@ -12,9 +12,11 @@
 //! [`Upscale`] and never for a file name; [`card`] says what the model is.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use denoise_core::upscale::{Detail, Factor, Upscale};
-use denoise_core::{ModelError, TileModel};
+use denoise_core::{ModelError, TileModel, TilePlan};
+use serde::{Deserialize, Serialize};
 
 use crate::{Device, EngineError, EngineOptions, Gpu, ModelFiles, Network};
 
@@ -114,6 +116,37 @@ pub const fn card(upscale: Upscale) -> ModelCard {
             licence: "Apache-2.0",
             training_data: "DIV2K, Flickr2K, OST, WED, FFHQ, Manga109, SCUT-CTW1500",
         },
+    }
+}
+
+/// How fast an enlargement ran on this computer: the time per tile of a
+/// whole enlarged export (the network, the colour handling and the writing
+/// of the file), with the tile size it used. Lets the program estimate the
+/// time of the next enlargement before it starts.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpscaleSpeed {
+    /// Side of the input tile the upscaler ran with.
+    pub tile_px: usize,
+    pub secs_per_tile: f64,
+}
+
+impl UpscaleSpeed {
+    /// The speed of an enlargement of `tiles` tiles of `tile_px` that took
+    /// `elapsed`; `None` if nothing was measured.
+    pub fn measured(tile_px: usize, elapsed: Duration, tiles: usize) -> Option<Self> {
+        let secs = elapsed.as_secs_f64();
+        (tiles > 0 && secs > 0.0).then(|| Self { tile_px, secs_per_tile: secs / tiles as f64 })
+    }
+
+    /// Seconds to enlarge a photo of `width × height` at this speed; `None`
+    /// for an empty photo or a measure that makes no sense (as one read back
+    /// from damaged settings).
+    pub fn estimate(&self, width: usize, height: usize) -> Option<f64> {
+        if !(self.secs_per_tile.is_finite() && self.secs_per_tile > 0.0) {
+            return None;
+        }
+        let tiles = TilePlan::new(width, height, self.tile_px, UPSCALE_MARGIN_PX).ok()?.len();
+        Some(tiles as f64 * self.secs_per_tile)
     }
 }
 
@@ -263,5 +296,25 @@ mod tests {
             Err(EngineError::Missing(_))
         ));
         assert_eq!(card(X4_GENERATED).licence, "Apache-2.0");
+    }
+
+    #[test]
+    fn the_measured_speed_estimates_the_next_enlargement() {
+        // 12 tiles of 640 px in 60 s: 5 s per tile
+        let speed = UpscaleSpeed::measured(640, Duration::from_secs(60), 12).unwrap();
+        assert_eq!(speed, UpscaleSpeed { tile_px: 640, secs_per_tile: 5.0 });
+        // 640 px tiles keep 512 px each: 4000 × 3000 takes 8 × 6 tiles
+        assert_eq!(speed.estimate(4000, 3000), Some(240.0));
+        // a photo smaller than one tile still costs a whole tile
+        assert_eq!(speed.estimate(10, 10), Some(5.0));
+        assert_eq!(speed.estimate(0, 10), None);
+        // nothing measured
+        assert_eq!(UpscaleSpeed::measured(640, Duration::from_secs(60), 0), None);
+        assert_eq!(UpscaleSpeed::measured(640, Duration::ZERO, 3), None);
+        // measures that make no sense give no estimate
+        for secs_per_tile in [f64::NAN, f64::INFINITY, -1.0, 0.0] {
+            assert_eq!(UpscaleSpeed { tile_px: 640, secs_per_tile }.estimate(100, 100), None);
+        }
+        assert_eq!(UpscaleSpeed { tile_px: 100, secs_per_tile: 1.0 }.estimate(100, 100), None);
     }
 }

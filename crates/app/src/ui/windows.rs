@@ -74,6 +74,9 @@ impl ApsophosApp {
         let denoised = self.doc.as_ref().is_some_and(crate::document::Document::is_complete);
         let mut want_preview = false;
         let running = self.download.as_ref().map(|d| (d.done, d.total));
+        // the estimate needs the settings while the export part of them is borrowed
+        let timings = self.settings.upscale_timings.clone();
+        let device = self.settings.engine.device;
         let mut download_action = None;
         widgets::dialog(ctx, te.title).open(&mut open).resizable(false).show(ctx, |ui| {
             let e = &mut self.settings.export;
@@ -103,7 +106,8 @@ impl ApsophosApp {
             ui.label(weak((te.suffix_example)(&e.suffix), &t));
             ui.add_space(SPACE_M);
             let size = self.doc.as_ref().map(|d| (d.width(), d.height()));
-            upscale_choice(ui, &t, &mut e.upscale, size, &files);
+            let speed = |u| crate::settings::upscale_speed(&timings, u, device);
+            upscale_choice(ui, &t, &mut e.upscale, size, &files, &speed);
             download_action = download_block(ui, &t, &files, running);
             if e.upscale.is_some() && size.is_some() {
                 let r = ui.add_enabled(denoised, egui::Button::new(te.preview));
@@ -283,13 +287,15 @@ fn download_block(
 
 /// The enlargement in the export settings: none, 2× or 4×, and faithful or
 /// generated detail; what has no model on disk is disabled, with the reason.
-/// Below: the size of the result for the open photo and the model's card.
+/// Below: the size of the result for the open photo, how long it should take
+/// at the speed `speed` measured for the choice, and the model's card.
 fn upscale_choice(
     ui: &mut egui::Ui,
     t: &Tokens,
     choice: &mut Option<Upscale>,
     size: Option<(usize, usize)>,
     files: &[PathBuf],
+    speed: &dyn Fn(Upscale) -> Option<denoise_engine::UpscaleSpeed>,
 ) {
     let te = &tr().export;
     let have = |u: Upscale| !denoise_engine::upscaler_files(files, u).is_empty();
@@ -326,6 +332,8 @@ fn upscale_choice(
         let f = u.factor.value();
         let text = format!("{} × {} px ({})", format::int(w * f), format::int(h * f), format::megapixels(w * f, h * f));
         ui.label(weak((te.upscale_result)(&text), t));
+        let secs = speed(u).and_then(|s| s.estimate(w, h));
+        ui.label(weak(format::upscale_estimate(secs), t));
     }
     let card = denoise_engine::card(u);
     ui.label(weak((te.upscale_model)(card.network, card.licence, card.training_data), t));

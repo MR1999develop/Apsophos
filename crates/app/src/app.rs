@@ -959,6 +959,9 @@ impl ApsophosApp {
                     ),
                 }
             }
+            Msg::UpscaleMeasured { upscale, device, speed } => {
+                self.settings.remember_upscale_speed(upscale, device, speed);
+            }
             Msg::ExportProgress { done, total } => {
                 if let Some(run) = &mut self.upscaling {
                     (run.done, run.total) = (done, total);

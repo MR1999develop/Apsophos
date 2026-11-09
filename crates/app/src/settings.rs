@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use denoise_core::upscale::{Detail, Upscale};
 use denoise_core::{product, Params};
-use denoise_engine::{Device, EngineOptions, TileProfile, MODEL_FILE};
+use denoise_engine::{Device, EngineOptions, TileProfile, UpscaleSpeed, MODEL_FILE};
 use denoise_io::ExportOptions;
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +82,20 @@ pub struct TileHint {
     pub profile: Option<TileProfile>,
 }
 
+/// The speed of the last enlargement made with one choice (2× or 4×,
+/// faithful or generated) and one device setting.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UpscaleTiming {
+    pub upscale: Upscale,
+    pub device: Device,
+    pub speed: UpscaleSpeed,
+}
+
+/// The measured speed for `upscale` on `device`, if an enlargement measured it.
+pub fn upscale_speed(timings: &[UpscaleTiming], upscale: Upscale, device: Device) -> Option<UpscaleSpeed> {
+    timings.iter().find(|t| t.upscale == upscale && t.device == device).map(|t| t.speed)
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -102,9 +116,20 @@ pub struct Settings {
     pub language: Option<Language>,
     /// The user asked not to be offered the upscaling models at start.
     pub no_upscaler_offer: bool,
+    /// Enlargement speeds measured on this computer, at most one for each
+    /// choice and device setting: they give the time estimate in the export
+    /// settings.
+    pub upscale_timings: Vec<UpscaleTiming>,
 }
 
 impl Settings {
+    /// Remembers the speed of an enlargement just made, in place of the
+    /// earlier one for the same choice and device setting.
+    pub fn remember_upscale_speed(&mut self, upscale: Upscale, device: Device, speed: UpscaleSpeed) {
+        self.upscale_timings.retain(|t| !(t.upscale == upscale && t.device == device));
+        self.upscale_timings.push(UpscaleTiming { upscale, device, speed });
+    }
+
     pub fn push_recent(&mut self, path: &Path) {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_path_buf());
@@ -190,6 +215,25 @@ mod tests {
         assert_eq!(s.recent.len(), MAX_RECENT);
         assert_eq!(s.recent[0], Path::new("/photos/3.tif"));
         assert_eq!(s.recent.iter().filter(|p| p.ends_with("3.tif")).count(), 1);
+    }
+
+    #[test]
+    fn each_choice_keeps_its_last_speed() {
+        use denoise_core::upscale::Factor;
+        let x2 = Upscale { factor: Factor::X2, detail: Detail::Faithful };
+        let x4 = Upscale { factor: Factor::X4, detail: Detail::Faithful };
+        let speed = |secs_per_tile| UpscaleSpeed { tile_px: 640, secs_per_tile };
+        let mut s = Settings::default();
+        assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Auto), None);
+        s.remember_upscale_speed(x2, Device::Auto, speed(5.0));
+        s.remember_upscale_speed(x4, Device::Auto, speed(9.0));
+        s.remember_upscale_speed(x2, Device::Cpu, speed(80.0));
+        // a new measure replaces the old one
+        s.remember_upscale_speed(x2, Device::Auto, speed(4.0));
+        assert_eq!(s.upscale_timings.len(), 3);
+        assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Auto), Some(speed(4.0)));
+        assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Cpu), Some(speed(80.0)));
+        assert_eq!(upscale_speed(&s.upscale_timings, x4, Device::Cpu), None);
     }
 
     #[test]

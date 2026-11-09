@@ -63,6 +63,18 @@ pub fn eta(elapsed: Duration, done: usize, total: usize) -> Option<String> {
     })
 }
 
+/// The time an enlargement should take, from `secs` estimated with the
+/// speed measured on this computer: `about 2 min 30 s on this computer`, or
+/// that no enlargement has measured it yet.
+pub fn upscale_estimate(secs: Option<f64>) -> String {
+    let te = &tr().export;
+    // at least a second: "about 0 s" would read as "instant"
+    match secs.filter(|s| s.is_finite()).and_then(|s| Duration::try_from_secs_f64(s.max(1.0)).ok()) {
+        Some(d) => (te.upscale_time)(&duration(d)),
+        None => te.upscale_time_unknown.to_owned(),
+    }
+}
+
 /// Progress 0..=1 (0 for an empty job).
 pub fn fraction(done: usize, total: usize) -> f32 {
     if total == 0 {
@@ -154,6 +166,17 @@ mod tests {
         assert!(fraction(3, 0).abs() < 1e-6 && (fraction(5, 4) - 1.0).abs() < 1e-6);
         assert_eq!(processing(3, 12), "Processing · 3/12");
         assert_eq!(processing(0, 0), "Processing…");
+    }
+
+    #[test]
+    fn enlargement_estimates() {
+        assert_eq!(upscale_estimate(Some(150.4)), "Enlargement time: about 2 min 30 s on this computer");
+        assert_eq!(upscale_estimate(Some(0.2)), "Enlargement time: about 1 s on this computer");
+        let unknown = "Enlargement time: not measured yet (the first enlargement measures it)";
+        assert_eq!(upscale_estimate(None), unknown);
+        // values that are no time at all
+        assert_eq!(upscale_estimate(Some(f64::NAN)), unknown);
+        assert_eq!(upscale_estimate(Some(f64::INFINITY)), unknown);
     }
 
     #[test]

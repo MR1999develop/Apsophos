@@ -20,7 +20,7 @@ use denoise_core::upscale::Upscale;
 use denoise_core::{
     blend, run_tiles, DenoiseError, Image, JobControl, Params, PixelRect, TileModel, TileOutput, TilePlan,
 };
-use denoise_engine::{EngineOptions, Scunet, TileProfile, Upscaler};
+use denoise_engine::{EngineOptions, Scunet, TileProfile, UpscaleSpeed, Upscaler};
 use denoise_io::{ExportOptions, Picture, ReadLimits, SourceInfo};
 use eframe::egui;
 
@@ -171,6 +171,13 @@ pub enum Msg {
         doc_id: u64,
         upscale: Upscale,
         result: Result<upscaling::Preview, String>,
+    },
+    /// An enlargement completed with `upscale` on the device setting
+    /// `device` at `speed`: to remember for the next estimate.
+    UpscaleMeasured {
+        upscale: Upscale,
+        device: denoise_engine::Device,
+        speed: UpscaleSpeed,
     },
     /// Progress of an enlarged export, in tiles.
     ExportProgress {
@@ -491,11 +498,52 @@ fn export_upscaled(
     let alpha = job.alpha.as_deref().map(Vec::as_slice);
     let mut progress = |done, total| out.send(Msg::ExportProgress { done, total });
     let target = upscaling::Output { path: &job.path, info: &job.info, opts: &job.options };
-    upscaling::write_enlarged(&target, &blended, alpha, model, &mut progress, control).map_err(|e| match e {
-        ExportError::Cancelled => None,
-        ExportError::Failed(why) => Some(why),
-    })?;
+    let timed = Timed { upscale, device: models.engine.device, out };
+    timed.write_enlarged(&target, &blended, alpha, model, &mut progress, control)?;
     Ok(job.path.clone())
+}
+
+/// An enlargement that, once complete, reports how long its tiles took.
+struct Timed<'a> {
+    upscale: Upscale,
+    /// The device setting the upscaler was loaded with.
+    device: denoise_engine::Device,
+    out: &'a Outbox,
+}
+
+impl Timed<'_> {
+    /// [`upscaling::write_enlarged`], measured; `Err(None)` if cancelled,
+    /// otherwise the error message for the user.
+    fn write_enlarged(
+        &self,
+        target: &upscaling::Output<'_>,
+        img: &Image,
+        alpha: Option<&[f32]>,
+        model: &mut Upscaler,
+        progress: &mut dyn FnMut(usize, usize),
+        control: &JobControl,
+    ) -> Result<(), Option<String>> {
+        let started = std::time::Instant::now();
+        let mut tiles = 0;
+        let mut counted = |done, total| {
+            tiles = total;
+            progress(done, total);
+        };
+        upscaling::write_enlarged(target, img, alpha, model, &mut counted, control).map_err(|e| match e {
+            ExportError::Cancelled => None,
+            ExportError::Failed(why) => Some(why),
+        })?;
+        if let Some(speed) = UpscaleSpeed::measured(model.input_px(), started.elapsed(), tiles) {
+            tracing::info!(
+                "enlargement {:?}: {:.2} s per {} px tile",
+                self.upscale,
+                speed.secs_per_tile,
+                speed.tile_px
+            );
+            self.out.send(Msg::UpscaleMeasured { upscale: self.upscale, device: self.device, speed });
+        }
+        Ok(())
+    }
 }
 
 fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
@@ -664,10 +712,8 @@ fn process_file(
         Some(u) => {
             let model = nets.upscaler(u, batch.upscalers, out).map_err(Some)?;
             let output = upscaling::Output { path: &target, info: &picture.info, opts: &export.options };
-            upscaling::write_enlarged(&output, &result, alpha, model, progress, control).map_err(|e| match e {
-                ExportError::Cancelled => None,
-                ExportError::Failed(why) => Some(why),
-            })?;
+            let timed = Timed { upscale: u, device: batch.upscalers.engine.device, out };
+            timed.write_enlarged(&output, &result, alpha, model, progress, control)?;
         }
     }
     Ok(target)

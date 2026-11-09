@@ -424,6 +424,10 @@ pub struct Export {
     pub download_note: &'static str,
     pub downloading: &'static str,
     pub cancel_download: &'static str,
+    /// The estimated time of the enlargement of the open photo, from the
+    /// duration already formatted.
+    pub upscale_time: fn(&str) -> String,
+    pub upscale_time_unknown: &'static str,
 }
 
 /// The keyboard shortcuts window: what each key does.
@@ -880,6 +884,8 @@ pub static EN: Texts = Texts {
         download_note: "From the project's page on GitHub, each file checked before use; nothing else is sent.",
         downloading: "Downloading the upscaling models…",
         cancel_download: "Cancel download",
+        upscale_time: |d| format!("Enlargement time: about {d} on this computer"),
+        upscale_time_unknown: "Enlargement time: not measured yet (the first enlargement measures it)",
     },
     shortcuts: Shortcuts {
         title: "Keyboard shortcuts",
@@ -1338,6 +1344,8 @@ pub static IT: Texts = Texts {
             "Dalla pagina del progetto su GitHub, ogni file controllato prima dell'uso; non si invia nient'altro.",
         downloading: "Download dei modelli di ingrandimento…",
         cancel_download: "Annulla download",
+        upscale_time: |d| format!("Tempo dell'ingrandimento: circa {d} su questo computer"),
+        upscale_time_unknown: "Tempo dell'ingrandimento: non ancora misurato (lo misura il primo ingrandimento)",
     },
     shortcuts: Shortcuts {
         title: "Scorciatoie da tastiera",
