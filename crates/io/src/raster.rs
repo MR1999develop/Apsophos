@@ -133,9 +133,7 @@ pub fn write_jpeg<W: Write, S: BandSource>(
         jpeg_encoder::SamplingFactor::R_4_2_0
     });
     if let Some(exif_blob) = &info.exif {
-        let mut blob = exif_blob.clone();
-        exif::reset_orientation(&mut blob);
-        let segment = exif::with_header(&blob);
+        let segment = exif::with_header(&exif::for_output(exif_blob, u32::from(w), u32::from(h)));
         // EXIF larger than one segment (rare: huge thumbnails) is left out
         if segment.len() <= MAX_APP_SEGMENT {
             enc.add_app_segment(1, &segment).map_err(enc_err)?;
@@ -195,11 +193,7 @@ pub fn write_png<W: Write, S: BandSource>(
     };
     header.bit_depth = if sixteen { png::BitDepth::Sixteen } else { png::BitDepth::Eight };
     header.icc_profile = info.icc.as_deref().filter(|p| icc_fits(p, info.gray)).map(Cow::Borrowed);
-    header.exif_metadata = info.exif.as_ref().map(|blob| {
-        let mut blob = blob.clone();
-        exif::reset_orientation(&mut blob);
-        Cow::Owned(blob)
-    });
+    header.exif_metadata = info.exif.as_ref().map(|blob| Cow::Owned(exif::for_output(blob, w, h)));
     header.pixel_dims = info.dpi.map(|d| {
         let per_metre = |v: f64| num::round_to_u32(v / METRES_PER_INCH, 1);
         png::PixelDimensions { xppu: per_metre(d.x), yppu: per_metre(d.y), unit: png::Unit::Meter }

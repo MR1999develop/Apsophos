@@ -60,6 +60,21 @@ impl Metadata {
     pub fn is_empty(&self) -> bool {
         self.main.is_empty() && self.exif.is_empty() && self.gps.is_empty()
     }
+
+    /// Sets `PixelXDimension` and `PixelYDimension` of the EXIF sub-IFD,
+    /// where present, to the size of the file written (as LONG values, so
+    /// that any size fits); tags that are missing are not added.
+    pub fn set_pixel_dimensions(&mut self, width: u32, height: u32) {
+        use crate::exif::{TAG_PIXEL_X, TAG_PIXEL_Y};
+        for e in &mut self.exif {
+            let value = match e.tag {
+                TAG_PIXEL_X => width,
+                TAG_PIXEL_Y => height,
+                _ => continue,
+            };
+            *e = Entry { tag: e.tag, typ: TYPE_LONG, count: 1, data: value.to_le_bytes().to_vec() };
+        }
+    }
 }
 
 const TAG_X_RESOLUTION: u16 = 282;

@@ -51,6 +51,21 @@ proptest! {
         let _ = exif::orientation(&data);
         let mut copy = data.clone();
         exif::reset_orientation(&mut copy);
+        // the output block keeps the size of the input, whatever it holds
+        prop_assert_eq!(exif::for_output(&data, 70_000, 1).len(), data.len());
+    }
+
+    #[test]
+    fn damaged_exif_blocks_with_pixel_dimensions(
+        little in damaged(exif::sample_with_dimensions(6000, 4000, true)),
+        big in damaged(exif::sample_with_dimensions(6000, 4000, false)),
+    ) {
+        for data in [little, big] {
+            let out = exif::for_output(&data, 70_000, 1);
+            prop_assert_eq!(out.len(), data.len());
+            let _ = exif::pixel_dimensions(&out);
+            let _ = meta::from_exif(&out);
+        }
     }
 
     #[test]

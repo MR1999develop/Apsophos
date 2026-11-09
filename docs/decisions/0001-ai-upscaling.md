@@ -110,8 +110,11 @@ pixel, 4.6 GB for 4× of 24 MP).
 - Alpha is upscaled with Catmull-Rom and clamped.
 - The resolution (DPI) is kept, so the print size grows with the pixels, as
   in Photoshop's Image Size with resampling. The EXIF pixel dimensions
-  (`PixelXDimension`, `PixelYDimension`) still give the original size:
-  readers use the image's own size, and updating them is left for later.
+  (`PixelXDimension`, `PixelYDimension`) are set to the size of the file
+  written (since 9 November, for every export: a rotated photo had them
+  swapped too), in place in the EXIF block of a JPEG or PNG (as LONG
+  values, so the block keeps its size and its offsets) and in the copied
+  sub-IFD of a TIFF; tags that are missing are not added.
 - The name says what was done: `photo_dn_2x.tif`, `photo_dn_4x-gen.tif`.
 
 ## Decision 5 — tiles

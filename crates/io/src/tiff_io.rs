@@ -285,7 +285,10 @@ pub fn write<W: Write + Seek, S: BandSource>(
     });
     let tags = Tags {
         icc,
-        meta: info.exif.as_deref().and_then(meta::from_exif),
+        meta: info.exif.as_deref().and_then(meta::from_exif).map(|mut m| {
+            m.set_pixel_dimensions(w, h);
+            m
+        }),
         xmp: crate::raster::whole_xmp(info),
         dpi: info.dpi,
     };
@@ -380,6 +383,33 @@ mod tests {
         write_file(&j2, &img, None, &jpeg.info, &opts).unwrap();
         let again = crate::read(&j2, &ReadLimits::default()).unwrap();
         assert_eq!(again.info.xmp.as_deref(), Some(xmp.as_slice()));
+    }
+
+    #[test]
+    fn exif_pixel_dimensions_are_those_of_the_file_written() {
+        let dir = tempfile::tempdir().unwrap();
+        // a photo of 8 × 6 according to its EXIF, written as 16 × 12 (as an
+        // enlargement would), from an EXIF block in either byte order
+        let img = gradient(16, 12);
+        for little in [true, false] {
+            let mut src = info(BitDepth::U16, false);
+            src.exif = Some(crate::exif::sample_with_dimensions(8, 6, little));
+            for (format, ext) in
+                [(ExportFormat::Tiff16, "tif"), (ExportFormat::Jpeg, "jpg"), (ExportFormat::Png16, "png")]
+            {
+                let p = dir.path().join(format!("d{little}.{ext}"));
+                let opts = ExportOptions { format, ..Default::default() };
+                write_file(&p, &img, None, &src, &opts).unwrap();
+                let back = crate::read(&p, &ReadLimits::default()).unwrap();
+                let dims = back.info.exif.as_deref().and_then(crate::exif::pixel_dimensions);
+                assert_eq!(dims, Some((16, 12)), "{format:?}");
+                // and once more from the written file, as a second export would
+                let p2 = dir.path().join(format!("e{little}.{ext}"));
+                write_file(&p2, &gradient(5, 4), None, &back.info, &opts).unwrap();
+                let again = crate::read(&p2, &ReadLimits::default()).unwrap();
+                assert_eq!(again.info.exif.as_deref().and_then(crate::exif::pixel_dimensions), Some((5, 4)));
+            }
+        }
     }
 
     #[test]
