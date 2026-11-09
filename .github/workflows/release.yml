@@ -63,8 +63,14 @@ jobs:
       # the toolchain is pinned in rust-toolchain.toml
       - run: rustup show
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # cargo-auditable writes the dependency list (names, versions, sources)
+      # into the executable, so `cargo audit bin apsophos.exe` can check a
+      # released program against the advisories without the repository.
+      # Pinned version, built from its own lock file.
+      - name: cargo-auditable
+        run: cargo install --locked cargo-auditable --version 0.7.7
       - name: Build
-        run: cargo build --release -p apsophos --no-default-features --features directml
+        run: cargo auditable build --release --locked -p apsophos --no-default-features --features directml
 
       - name: Sign the program
         if: env.CAN_SIGN == 'true'
@@ -97,22 +103,50 @@ jobs:
           $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$env:NAME-setup.exe"
           scripts/winget-manifest.ps1 -Version $env:VERSION -Installer "dist/$env:NAME-setup.exe" -InstallerUrl $url -OutDir dist/winget
 
+      # SHA-256 of what the release hands out, after signing: the zip, the
+      # installer and the SCUNet models in the package (named by their path
+      # in the unzipped folder), in the format of `sha256sum -c`
+      - name: SHA256SUMS
+        shell: pwsh
+        run: |
+          $models = @(Get-ChildItem "dist/$env:NAME/models" -Filter '*.onnx' -File | Sort-Object Name | ForEach-Object { "$env:NAME/models/$($_.Name)" })
+          if ($models.Count -eq 0) { throw "no models in dist/$env:NAME/models" }
+          $lines = foreach ($file in @("$env:NAME.zip", "$env:NAME-setup.exe") + $models) {
+            $path = Join-Path 'dist' $file
+            if (-not (Test-Path $path -PathType Leaf)) { throw "missing: $path" }
+            '{0}  {1}' -f (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant(), $file
+          }
+          $sums = Join-Path $PWD 'dist/SHA256SUMS.txt'
+          [System.IO.File]::WriteAllText($sums, ($lines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
+          Get-Content $sums
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.NAME }}
           path: |
             dist/${{ env.NAME }}.zip
             dist/${{ env.NAME }}-setup.exe
+            dist/SHA256SUMS.txt
             dist/winget/
           if-no-files-found: error
 
       # signed record of which workflow and commit built the files
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: provenance
         if: github.ref_type == 'tag'
         with:
           subject-path: |
             dist/${{ env.NAME }}.zip
             dist/${{ env.NAME }}-setup.exe
+            dist/SHA256SUMS.txt
+      # the attestation also as a release file, for `gh attestation verify
+      # --bundle` without asking GitHub
+      - name: Provenance file
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: Copy-Item $env:BUNDLE "dist/$env:NAME.provenance.sigstore.json"
 
       - name: Draft release
         if: github.ref_type == 'tag'
@@ -122,3 +156,5 @@ jobs:
           files: |
             dist/${{ env.NAME }}.zip
             dist/${{ env.NAME }}-setup.exe
+            dist/SHA256SUMS.txt
+            dist/${{ env.NAME }}.provenance.sigstore.json

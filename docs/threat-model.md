@@ -96,7 +96,14 @@ Trust boundaries, from the least trusted:
   read-only workflow tokens, actions pinned to commit hashes,
   `cargo deny` (advisories, yanked crates, licences, sources) in every
   check, Dependabot with a week's cooldown, draft releases published by
-  hand, optional code signing.
+  hand, optional code signing. The local check and the CI run the same
+  command (`cargo xtask check`), so what is checked before a merge is
+  what the CI checks. The program's release (`release.yml`) is built with
+  `cargo auditable` (the dependency list inside the executable, for
+  `cargo audit bin`); the draft release carries `SHA256SUMS.txt` with the
+  SHA-256 of the zip, of the installer and of every SCUNet model in the
+  package, and a build provenance attestation covering the three files,
+  also attached as a file.
 - **Executables** built with Control Flow Guard and CET shadow stack
   compatibility (`.cargo/config.toml`), without local paths inside.
 
@@ -109,6 +116,8 @@ Trust boundaries, from the least trusted:
 - **Model files are not verified by hash:** a model chosen by hand is
   trusted like a document the user opens; the official models are made
   locally from weights whose SHA-256 is checked
-  (`tools/export_onnx_model.py`, `tools/export_upscaler_model.py`).
+  (`tools/export_onnx_model.py`, `tools/export_upscaler_model.py`). The
+  program does not check the models of its own folder either: their
+  SHA-256 is in the release's `SHA256SUMS.txt`, for a check by hand.
 - **Logs hold file paths:** they stay on the user's computer, in the user's
   data folder, one file a day, the last seven kept.

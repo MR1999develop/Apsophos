@@ -29,7 +29,7 @@ cargo run --release
 The first build downloads ONNX Runtime, DirectML and the TensorRT for RTX provider (Internet access and a few minutes needed). On Windows the scripts in `scripts\` do the rest:
 
 - `scripts\prepare.bat`, once: makes the missing FP16 models, says where TensorRT for RTX is (`-RepairDlls` fetches ONNX Runtime's DLLs again if a build lost them);
-- `scripts\check.bat`, after every change: format, release build, tests, Clippy (`-D warnings`) and cargo-deny when installed, with the full output in `target\check.log` and a summary in `target\check-summary.txt`; a branch goes into `main` only when everything is green;
+- `scripts\check.bat`, after every change: `cargo xtask check` (format, build and tests in release and in debug, Clippy with `-D warnings`, cargo-deny, which must be installed: `cargo install --locked cargo-deny`), the same command the CI runs on Windows and Ubuntu, plus the TensorRT for RTX DLLs next to the program; the full output goes to `target\check.log` and a summary to `target\check-summary.txt`; a branch goes into `main` only when everything is green;
 - `scripts\self-test.bat`: speed of every back end, in `target\self-test.txt`;
 - `scripts\run.bat`: starts the program.
 
@@ -58,7 +58,7 @@ With Inno Setup 6 installed, `package.bat` also makes `dist\Apsophos-<version>-w
 
 ### Release
 
-Pushing a tag `v<version>` (the version in `Cargo.toml`) runs `.github/workflows/release.yml` on GitHub: it makes the models from the original KAIR weights (checked by SHA-256), builds the DirectML and CPU program (the TensorRT for RTX DLLs are an NVIDIA download), makes the package, the installer and the winget manifest (`scripts\winget-manifest.ps1`), and attaches the package and the installer to a **draft** release, published by hand. With the repository secrets `SIGN_PFX` (a code-signing certificate, `.pfx` in base64) and `SIGN_PASSWORD` it also signs the program and the installer (`scripts\sign.ps1`, with a timestamp). Run by hand from the *Actions* tab it only builds, as artifacts.
+Pushing a tag `v<version>` (the version in `Cargo.toml`) runs `.github/workflows/release.yml` on GitHub: it makes the models from the original KAIR weights (checked by SHA-256), builds the DirectML and CPU program (the TensorRT for RTX DLLs are an NVIDIA download), makes the package, the installer and the winget manifest (`scripts\winget-manifest.ps1`), and attaches the package, the installer, `SHA256SUMS.txt` (SHA-256 of the zip, the installer and the models in the package) and the build provenance attestation to a **draft** release, published by hand. The program is built with `cargo auditable`, so `cargo audit bin apsophos.exe` checks the released executable against the security advisories. To check a download: `sha256sum -c --ignore-missing SHA256SUMS.txt` (or compare with `Get-FileHash` in PowerShell) and `gh attestation verify <file> --repo <owner>/<repository>`. With the repository secrets `SIGN_PFX` (a code-signing certificate, `.pfx` in base64) and `SIGN_PASSWORD` it also signs the program and the installer (`scripts\sign.ps1`, with a timestamp). Run by hand from the *Actions* tab it only builds, as artifacts.
 
 ## The model
 
