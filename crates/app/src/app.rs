@@ -248,8 +248,8 @@ pub struct ApsophosApp {
     /// Set while an enlarged export runs (with `exporting`).
     pub upscaling: Option<UpscaleRun>,
     pub preview: UpscalePreview,
-    /// The upscaling models on disk, read when the export settings open
-    /// (never on every frame).
+    /// The upscaling models on disk, read once and again when the export
+    /// settings open or a download ends (never on every frame).
     pub upscaler_files: Option<Vec<PathBuf>>,
     pub download: Option<DownloadRun>,
     /// Folders being read for the queue.
@@ -337,6 +337,19 @@ impl ApsophosApp {
         let size = format::bytes(download::pack_bytes(download::Pack::Faithful));
         let actions = vec![NoticeAction::DownloadUpscalers, NoticeAction::NoUpscalerOffer];
         self.notify(NoticeKind::Info, (tr().notices.upscalers_offer)(&size), actions);
+    }
+
+    /// The upscaling model files on disk, read the first time after a
+    /// change (see [`Self::upscaler_files`]).
+    pub fn upscaler_files_now(&mut self) -> Vec<PathBuf> {
+        self.upscaler_files.get_or_insert_with(|| self.settings.upscaler_files()).clone()
+    }
+
+    /// Opens the export settings, reading the model files again (they may
+    /// have been copied by hand).
+    pub fn open_export_settings(&mut self) {
+        self.windows.export = true;
+        self.upscaler_files = None;
     }
 
     /// Downloads the models of `pack` that are missing, in the background.

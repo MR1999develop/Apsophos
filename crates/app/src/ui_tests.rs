@@ -117,11 +117,42 @@ fn export_settings_offer_the_enlargement() {
     let te = &tr().export;
     // "none" is always there; 2Ã— and 4Ã— are there, enabled or not as the
     // models on this computer allow
-    h.get_by_label(te.upscale_none);
-    h.get_by_label(te.upscale_x2);
-    h.get_by_label(te.upscale_x4);
+    // (the right panel has its own "4×": the window's are radio buttons)
+    for label in [te.upscale_none, te.upscale_x2, te.upscale_x4] {
+        h.get_by_role_and_label(Role::RadioButton, label);
+    }
     assert!(h.state().settings.export.upscale.is_none());
     assert_eq!(h.state().settings.export.full_suffix(), "_dn");
+}
+
+#[test]
+fn right_panel_chooses_the_enlargement() {
+    let mut h = harness();
+    let tx = &tr().params;
+    let factor = |h: &Harness<'_, ApsophosApp>, label: &'static str| {
+        h.get_by(move |n| n.label().is_some_and(|l| l == label) && n.role() != Role::Label)
+            .accesskit_node()
+            .is_disabled()
+    };
+    // no model on disk: the factors are disabled, "none" is chosen
+    h.state_mut().upscaler_files = Some(Vec::new());
+    h.run_steps(3);
+    h.get_by_label(tx.enlarge);
+    assert!(factor(&h, tx.enlarge_x2));
+    assert!(factor(&h, tx.enlarge_x4));
+    assert!(h.state().settings.export.upscale.is_none());
+    // with the faithful 2× model the choice is the export setting
+    h.state_mut().upscaler_files = Some(vec![PathBuf::from("swinir_real_x2_psnr_320_fp16.onnx")]);
+    h.run_steps(3);
+    assert!(!factor(&h, tx.enlarge_x2));
+    assert!(factor(&h, tx.enlarge_x4));
+    h.get_by(|n| n.label().is_some_and(|l| l == tr().params.enlarge_x2) && n.role() != Role::Label).click();
+    h.run_steps(3);
+    let chosen = h.state().settings.export.upscale.map(|u| (u.factor.value(), u.detail));
+    assert_eq!(chosen, Some((2, denoise_core::upscale::Detail::Faithful)));
+    h.get_by_label(tx.enlarge_none).click();
+    h.run_steps(3);
+    assert!(h.state().settings.export.upscale.is_none());
 }
 
 #[test]

@@ -81,7 +81,7 @@ impl ApsophosApp {
                 self.export_as();
             }
             if menu_item(ui, true, m.export_settings, None, "") {
-                self.windows.export = true;
+                self.open_export_settings();
             }
             ui.separator();
             if command(ui, f.view(), m.close_image, Some(&SC_CLOSE)) {

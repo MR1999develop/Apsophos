@@ -1,17 +1,20 @@
 //! Right panel: presets, sliders, the primary action, advanced options,
 //! image information and histogram.
 
+use denoise_core::upscale::{Detail, Factor, Upscale};
 use denoise_core::{num, Preset};
 use denoise_engine::Device;
 use eframe::egui::{self, pos2, vec2, Button, RichText, Sense, Shape, Stroke};
 
 use crate::app::*;
+use crate::download;
 use crate::format::{self, file_name, truncate_middle};
 use crate::inspect::BINS;
 use crate::text::tr;
 use crate::theme::*;
 
 use super::present::Primary;
+use super::windows::{download_block, DownloadAction};
 use super::*;
 
 impl ApsophosApp {
@@ -32,6 +35,8 @@ impl ApsophosApp {
                     self.presets(ui, &t);
                     ui.add_space(SPACE_M);
                     self.sliders(ui, &t);
+                    ui.add_space(SPACE_M);
+                    self.enlargement(ui, &t);
                     ui.add_space(SPACE_L);
                     self.primary(ui, &t);
                     ui.add_space(SPACE_L);
@@ -93,6 +98,50 @@ impl ApsophosApp {
         }
     }
 
+    /// The AI enlargement, the export setting chosen where the other
+    /// choices of the photo are: none, 2× or 4×. A factor without its model
+    /// on disk is disabled, and the download is offered below; the variant,
+    /// the estimate and the preview are in the export settings.
+    pub(super) fn enlargement(&mut self, ui: &mut egui::Ui, t: &Tokens) {
+        let tx = &tr().params;
+        let files = self.upscaler_files_now();
+        let faithful = |factor| Upscale { factor, detail: Detail::Faithful };
+        let have = |u: Upscale| !denoise_engine::upscaler_files(&files, u).is_empty();
+        ui.label(weak(tx.enlarge, t)).on_hover_text(tx.enlarge_tip);
+        ui.add_space(SPACE_XS);
+        let current = self.settings.export.upscale;
+        let mut choice = current;
+        ui.horizontal(|ui| {
+            if ui.selectable_label(current.is_none(), tx.enlarge_none).clicked() {
+                choice = None;
+            }
+            for (factor, label) in [(Factor::X2, tx.enlarge_x2), (Factor::X4, tx.enlarge_x4)] {
+                let selected = current.is_some_and(|u| u.factor == factor);
+                let r = ui.add_enabled_ui(have(faithful(factor)), |ui| ui.selectable_label(selected, label)).inner;
+                if r.on_hover_text(tx.enlarge_tip).on_disabled_hover_text(tx.enlarge_missing).clicked() {
+                    // the variant chosen in the export settings stays, if it has its model
+                    let wanted = Upscale { factor, detail: current.map_or(Detail::Faithful, |u| u.detail) };
+                    choice = Some(if have(wanted) { wanted } else { faithful(factor) });
+                }
+            }
+        });
+        self.settings.export.upscale = choice;
+        ui.label(weak(tx.enlarge_when, t));
+        let running = self.download.as_ref().map(|d| (d.done, d.total));
+        let missing = !download::missing(download::Pack::Faithful, &files).is_empty();
+        if running.is_some() || missing {
+            ui.add_space(SPACE_XS);
+            match download_block(ui, t, &files, running) {
+                Some(DownloadAction::Start(pack)) => self.start_download(pack),
+                Some(DownloadAction::Cancel) => self.cancel_download(),
+                None => {}
+            }
+        }
+        if ui.link(tx.enlarge_options).clicked() {
+            self.open_export_settings();
+        }
+    }
+
     pub(super) fn primary(&mut self, ui: &mut egui::Ui, t: &Tokens) {
         let tx = &tr().params;
         let full = vec2(ui.available_width(), CONTROL_HEIGHT);
@@ -134,7 +183,7 @@ impl ApsophosApp {
                     }
                     ui.label(weak("·", t));
                     if ui.link(tx.export_settings).clicked() {
-                        self.windows.export = true;
+                        self.open_export_settings();
                     }
                 });
                 ui.label(weak(tx.sliders_live, t));

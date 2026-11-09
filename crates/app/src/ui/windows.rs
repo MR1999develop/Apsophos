@@ -64,13 +64,9 @@ impl ApsophosApp {
         self.windows.preferences = open;
 
         let mut open = self.windows.export;
-        // the models on disk decide what can be chosen: read once per opening
-        let files = if open {
-            self.upscaler_files.get_or_insert_with(|| self.settings.upscaler_files()).clone()
-        } else {
-            self.upscaler_files = None;
-            Vec::new()
-        };
+        // the models on disk decide what can be chosen (read again at each
+        // opening and after a download)
+        let files = if open { self.upscaler_files_now() } else { Vec::new() };
         let denoised = self.doc.as_ref().is_some_and(crate::document::Document::is_complete);
         let mut want_preview = false;
         let running = self.download.as_ref().map(|d| (d.done, d.total));
@@ -315,7 +311,7 @@ fn model_cards(ui: &mut egui::Ui, t: &Tokens, models: &[crate::model_list::Liste
 }
 
 /// What the download part of the export settings asks for.
-enum DownloadAction {
+pub(super) enum DownloadAction {
     Start(Pack),
     Cancel,
 }
@@ -324,7 +320,7 @@ enum DownloadAction {
 /// faithful ones, and, once those are there, one for the generated-detail
 /// ones (never both at once: generated detail is a choice of its own).
 /// While a download runs: its progress and Cancel.
-fn download_block(
+pub(super) fn download_block(
     ui: &mut egui::Ui,
     t: &Tokens,
     files: &[PathBuf],

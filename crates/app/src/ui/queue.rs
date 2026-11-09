@@ -119,7 +119,7 @@ impl ApsophosApp {
         ui.horizontal(|ui| {
             ui.label(RichText::new(dest).color(t.text));
             if ui.link(tx.change).clicked() {
-                self.windows.export = true;
+                self.open_export_settings();
             }
         });
         ui.add_space(SPACE_S);
