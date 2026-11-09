@@ -146,9 +146,67 @@ pub enum Primary {
     },
 }
 
+/// The panes F6 moves the keyboard focus between, in the order of the
+/// window from left to right (the Windows convention for F6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pane {
+    Queue,
+    Photo,
+    Params,
+}
+
+impl Pane {
+    pub const ALL: [Pane; 3] = [Pane::Queue, Pane::Photo, Pane::Params];
+
+    /// Position in [`Pane::ALL`].
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// The pane F6 moves the focus to from `current` (Shift+F6, `back`, goes the
+/// other way), wrapping around and skipping the queue when it is hidden.
+/// With no current pane, F6 starts from the first and Shift+F6 from the last.
+pub fn next_pane(current: Option<Pane>, queue_shown: bool, back: bool) -> Pane {
+    let shown: Vec<Pane> = Pane::ALL.into_iter().filter(|p| queue_shown || *p != Pane::Queue).collect();
+    let n = shown.len();
+    let at = current.and_then(|c| shown.iter().position(|p| *p == c));
+    let i = match (at, back) {
+        (None, false) => 0,
+        (None, true) => n - 1,
+        (Some(i), false) => (i + 1) % n,
+        (Some(i), true) => (i + n - 1) % n,
+    };
+    shown[i]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn f6_goes_round_the_panes() {
+        use Pane::*;
+        assert_eq!(next_pane(None, true, false), Queue);
+        assert_eq!(next_pane(Some(Queue), true, false), Photo);
+        assert_eq!(next_pane(Some(Photo), true, false), Params);
+        assert_eq!(next_pane(Some(Params), true, false), Queue);
+        // Shift+F6 goes back
+        assert_eq!(next_pane(Some(Queue), true, true), Params);
+        assert_eq!(next_pane(Some(Params), true, true), Photo);
+        assert_eq!(next_pane(None, true, true), Params);
+    }
+
+    #[test]
+    fn f6_skips_the_hidden_queue() {
+        use Pane::*;
+        assert_eq!(next_pane(None, false, false), Photo);
+        assert_eq!(next_pane(Some(Params), false, false), Photo);
+        assert_eq!(next_pane(Some(Photo), false, true), Params);
+        // the focus was in the queue just hidden: on to the next one shown
+        assert_eq!(next_pane(Some(Queue), false, false), Photo);
+        assert_eq!(Pane::ALL.map(Pane::index), [0, 1, 2]);
+    }
 
     fn image() -> Facts {
         Facts { has_image: true, gpu_build: true, ..Facts::default() }

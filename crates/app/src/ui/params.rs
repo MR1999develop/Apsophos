@@ -18,7 +18,7 @@ impl ApsophosApp {
     pub(super) fn ui_params(&mut self, root: &mut egui::Ui) {
         let t = self.tokens;
         let tx = &tr().params;
-        egui::Panel::right("params")
+        let panel = egui::Panel::right("params")
             .resizable(true)
             .default_size(PARAMS_PANEL_WIDTH)
             .size_range(PARAMS_PANEL_RANGE)
@@ -43,6 +43,7 @@ impl ApsophosApp {
                     self.histogram(ui, &t);
                 });
             });
+        self.panes.area(Pane::Params, panel.response.rect);
     }
 
     pub(super) fn presets(&mut self, ui: &mut egui::Ui, t: &Tokens) {
@@ -59,7 +60,11 @@ impl ApsophosApp {
                 };
                 let shown =
                     if p == Preset::Medium { format!("{name}{}", tx.recommended_mark) } else { name.to_owned() };
-                if ui.selectable_label(current == Some(p), shown).on_hover_text(tip).clicked() {
+                let r = ui.selectable_label(current == Some(p), shown).on_hover_text(tip);
+                if p == Preset::ALL[0] {
+                    self.panes.land_on(Pane::Params, &r);
+                }
+                if r.clicked() {
                     self.set_params(p.params(), (tr().history.preset)(name));
                 }
             }

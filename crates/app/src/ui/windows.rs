@@ -149,7 +149,7 @@ impl ApsophosApp {
             let k = |sc: &KeyboardShortcut| keys(ui, sc);
             // what a single key does, marked when those keys are turned off
             let single = |what: &str| if single_keys_off { format!("{what}{}", ts.off) } else { what.to_owned() };
-            let rows: [(String, String); 16] = [
+            let rows: [(String, String); 17] = [
                 (k(&SC_OPEN), ts.open.into()),
                 (k(&SC_EXPORT), ts.export.into()),
                 (k(&SC_EXPORT_AS), ts.export_as.into()),
@@ -166,6 +166,7 @@ impl ApsophosApp {
                 (ts.original_keys.into(), ts.original.into()),
                 (ts.arrows.into(), ts.move_view.into()),
                 (ts.drag.into(), ts.drag_does.into()),
+                (format!("{} / {}", k(&SC_NEXT_PANE), k(&SC_PREVIOUS_PANE)), ts.panes.into()),
             ];
             egui::Grid::new("shortcuts").num_columns(2).spacing(vec2(SPACE_L, SPACE_S)).show(ui, |ui| {
                 for (k, v) in rows {

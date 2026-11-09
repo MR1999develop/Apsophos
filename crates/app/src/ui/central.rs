@@ -17,7 +17,7 @@ impl ApsophosApp {
         let t = self.tokens;
         let tx = &tr().central;
         let frame = egui::Frame::new().fill(t.canvas);
-        egui::CentralPanel::default().frame(frame).show(root, |ui| {
+        let panel = egui::CentralPanel::default().frame(frame).show(root, |ui| {
             self.notice_bar(ui, &t);
             let input = ViewerInput {
                 tokens: &t,
@@ -30,6 +30,7 @@ impl ApsophosApp {
             if let Some(doc) = self.doc.as_mut() {
                 let out = viewer::show(ui, &mut self.view, doc, &input);
                 self.hover = out.hover;
+                self.panes.land_on(Pane::Photo, &out.response);
             } else {
                 self.hover = None;
                 self.empty_state(ui, &t);
@@ -65,6 +66,7 @@ impl ApsophosApp {
                 );
             }
         });
+        self.panes.area(Pane::Photo, panel.response.rect);
     }
 
     pub(super) fn notice_bar(&mut self, ui: &mut egui::Ui, t: &Tokens) {
@@ -117,7 +119,9 @@ impl ApsophosApp {
             ui.add_space(SPACE_S);
             ui.label(RichText::new(tx.empty_formats).color(t.text));
             ui.add_space(SPACE_M);
-            if ui.add(Button::new(tx.open_image).min_size(vec2(SHORT_FIELD_W, CONTROL_HEIGHT))).clicked() {
+            let open = ui.add(Button::new(tx.open_image).min_size(vec2(SHORT_FIELD_W, CONTROL_HEIGHT)));
+            self.panes.land_on(Pane::Photo, &open);
+            if open.clicked() {
                 self.open_dialog();
             }
             if model_missing {

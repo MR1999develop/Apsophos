@@ -66,6 +66,9 @@ pub const SC_FIT: KeyboardShortcut = shortcut(false, false, Key::F);
 pub const SC_ACTUAL: KeyboardShortcut = shortcut(false, false, Key::Num1);
 pub const SC_STOP: KeyboardShortcut = shortcut(false, false, Key::Escape);
 pub const SC_NOISE: KeyboardShortcut = shortcut(false, false, Key::N);
+// the focus between the panes, as in Windows programs: always active
+pub const SC_NEXT_PANE: KeyboardShortcut = shortcut(false, false, Key::F6);
+pub const SC_PREVIOUS_PANE: KeyboardShortcut = shortcut(false, true, Key::F6);
 
 /// Noise reduction of the open image.
 pub enum Job {
@@ -258,6 +261,8 @@ pub struct ApsophosApp {
     /// Explanation under the primary button (e.g. what is missing).
     pub hint: Option<String>,
     title: String,
+    /// Where F6 moves the focus.
+    pub panes: crate::ui::PaneTargets,
 }
 
 impl ApsophosApp {
@@ -299,6 +304,7 @@ impl ApsophosApp {
             result_view: ResultView::Denoised,
             hint: None,
             title: String::new(),
+            panes: crate::ui::PaneTargets::default(),
         };
         app.offer_upscalers();
         match files.as_slice() {
@@ -1066,13 +1072,23 @@ impl ApsophosApp {
         if pressed(&SC_ZOOM_FIT) {
             self.view.request_fit();
         }
+        // Shift+F6 first: F6 also matches it
+        if pressed(&SC_PREVIOUS_PANE) {
+            self.focus_next_pane(ctx, true);
+        }
+        if pressed(&SC_NEXT_PANE) {
+            self.focus_next_pane(ctx, false);
+        }
+        if let Some(back) = self.panes.requested.take() {
+            self.focus_next_pane(ctx, back);
+        }
 
         // single keys: only when not typing in a field
         if ctx.egui_wants_keyboard_input() {
             self.show_original = false;
             return;
         }
-        let nothing_focused = ctx.memory(|m| m.focused().is_none());
+        let nothing_focused = ctx.memory(|m| m.focused().is_none()) || self.panes.photo_focused(ctx);
         let single_keys = !self.settings.single_keys_off;
         let (keys, hold, shift) = ctx.input(|i| {
             let plain = i.modifiers.is_none() || i.modifiers == Modifiers::SHIFT;

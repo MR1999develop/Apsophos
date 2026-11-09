@@ -16,9 +16,11 @@ impl ApsophosApp {
         let t = self.tokens;
         let tx = &tr().queue;
         let f = self.facts();
-        egui::Panel::left("queue").resizable(true).default_size(QUEUE_PANEL_WIDTH).size_range(QUEUE_PANEL_RANGE).show(
-            root,
-            |ui| {
+        let panel = egui::Panel::left("queue")
+            .resizable(true)
+            .default_size(QUEUE_PANEL_WIDTH)
+            .size_range(QUEUE_PANEL_RANGE)
+            .show(root, |ui| {
                 ui.add_space(SPACE_M);
                 ui.horizontal(|ui| {
                     ui.label(group_title(tx.title, &t));
@@ -30,7 +32,9 @@ impl ApsophosApp {
                 });
                 ui.add_space(SPACE_S);
                 ui.horizontal(|ui| {
-                    if add_command(ui, f.edit_queue(), Button::new(tx.add_files)).clicked() {
+                    let add = add_command(ui, f.edit_queue(), Button::new(tx.add_files));
+                    self.panes.land_on(Pane::Queue, &add);
+                    if add.clicked() {
                         self.add_files_dialog();
                     }
                     if add_command(ui, f.edit_queue(), Button::new(tx.add_folder))
@@ -99,8 +103,8 @@ impl ApsophosApp {
                         self.open_path(p);
                     }
                 });
-            },
-        );
+            });
+        self.panes.area(Pane::Queue, panel.response.rect);
     }
 
     pub(super) fn queue_controls(&mut self, ui: &mut egui::Ui, t: &Tokens) {

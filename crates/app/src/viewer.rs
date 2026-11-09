@@ -466,6 +466,8 @@ fn describe(response: &egui::Response, view: &ViewState, doc: &Document, input: 
 pub struct ViewerOutput {
     /// Pixel under the cursor.
     pub hover: Option<(usize, usize)>,
+    /// The image area, which can hold the keyboard focus (F6).
+    pub response: egui::Response,
 }
 
 /// Draws the image and handles mouse and wheel.
@@ -574,12 +576,19 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         minimap(ui, view, thumb, canvas, t);
     }
 
+    if response.has_focus() {
+        // the arrows move the view, not the focus
+        let arrows = egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() };
+        ctx.memory_mut(|m| m.set_focus_lock_filter(response.id, arrows));
+        painter.rect_stroke(canvas.shrink(1.0), 0.0, Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+    }
+
     let hover = pointer.and_then(|p| {
         let ip = view.to_image(p);
         (ip.x >= 0.0 && ip.y >= 0.0 && ip.x < size.x && ip.y < size.y)
             .then_some((num::floor_to_usize(ip.x, usize::MAX), num::floor_to_usize(ip.y, usize::MAX)))
     });
-    ViewerOutput { hover }
+    ViewerOutput { hover, response }
 }
 
 /// Small label over the image.

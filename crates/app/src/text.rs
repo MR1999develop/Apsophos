@@ -142,6 +142,9 @@ pub struct Menu {
     pub open_log_folder: &'static str,
     /// `About Apsophos`, from the product name.
     pub about: fn(&str) -> String,
+    /// The keyboard focus to the next or previous pane (F6, Shift+F6).
+    pub next_pane: &'static str,
+    pub previous_pane: &'static str,
 }
 
 /// Why a command cannot be used now (shown when hovering over it).
@@ -456,6 +459,8 @@ pub struct Shortcuts {
     pub drag_does: &'static str,
     /// After a single-key shortcut turned off in the preferences.
     pub off: &'static str,
+    /// What F6 and Shift+F6 do.
+    pub panes: &'static str,
 }
 
 pub struct About {
@@ -637,6 +642,8 @@ pub static EN: Texts = Texts {
         keyboard_shortcuts: "Keyboard shortcuts",
         open_log_folder: "Open log folder",
         about: |name| format!("About {name}"),
+        next_pane: "Next pane",
+        previous_pane: "Previous pane",
     },
     toolbar: Toolbar {
         open: "Open…",
@@ -911,6 +918,7 @@ pub static EN: Texts = Texts {
         drag: "Drag",
         drag_does: "Move the view or the divider",
         off: " (off)",
+        panes: "Focus to the next / previous pane: queue, photo, settings",
     },
     about: About {
         meaning: "From the ancient Greek ápsophos, “noiseless”.",
@@ -1092,6 +1100,8 @@ pub static IT: Texts = Texts {
         keyboard_shortcuts: "Scorciatoie da tastiera",
         open_log_folder: "Apri la cartella dei log",
         about: |name| format!("Informazioni su {name}"),
+        next_pane: "Riquadro successivo",
+        previous_pane: "Riquadro precedente",
     },
     toolbar: Toolbar {
         open: "Apri…",
@@ -1371,6 +1381,7 @@ pub static IT: Texts = Texts {
         drag: "Trascina",
         drag_does: "Sposta la vista o il divisore",
         off: " (spenta)",
+        panes: "Passa al riquadro successivo / precedente: coda, foto, impostazioni",
     },
     about: About {
         meaning: "Dal greco antico ápsophos, “senza rumore”.",

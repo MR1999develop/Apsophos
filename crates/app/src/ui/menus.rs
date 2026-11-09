@@ -138,6 +138,15 @@ impl ApsophosApp {
             }
             ui.separator();
             widgets::checkbox(ui, &mut self.settings.show_queue, m.show_queue);
+            ui.separator();
+            if menu_item(ui, true, m.next_pane, Some(&SC_NEXT_PANE), "") {
+                self.panes.requested = Some(false);
+                ui.ctx().request_repaint();
+            }
+            if menu_item(ui, true, m.previous_pane, Some(&SC_PREVIOUS_PANE), "") {
+                self.panes.requested = Some(true);
+                ui.ctx().request_repaint();
+            }
         });
     }
 

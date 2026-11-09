@@ -114,7 +114,7 @@ fn export_settings_offer_the_enlargement() {
     h.state_mut().windows.export = true;
     h.run_steps(3);
     let te = &tr().export;
-    // "none" is always there; 2× and 4× are there, enabled or not as the
+    // "none" is always there; 2Ã— and 4Ã— are there, enabled or not as the
     // models on this computer allow
     h.get_by_label(te.upscale_none);
     h.get_by_label(te.upscale_x2);
@@ -211,7 +211,7 @@ fn wheel_zooms_the_viewer() {
     });
     h.run_steps(8);
     let after = h.state().view.zoom_percent();
-    assert!(after > before * 1.05, "zoom {before} % → {after} %");
+    assert!(after > before * 1.05, "zoom {before} % â†’ {after} %");
 }
 
 #[test]
@@ -230,6 +230,56 @@ fn queue_context_menu_opens_an_item() {
     assert!(h.query_by_label(tr().queue.open_in_viewer).is_none(), "the context menu is still open");
     step_until(&mut h, "the queue item to open", |app| app.doc.is_some());
     assert!(h.state().doc.as_ref().is_some_and(|d| d.path.ends_with("second.png")));
+}
+
+/// Whether a widget with this role and name has the keyboard focus (the
+/// same name may be on more than one widget).
+fn focused(h: &Harness<'_, ApsophosApp>, role: Role, label: &str) -> bool {
+    h.query_all_by_role_and_label(role, label).any(|n| n.is_focused())
+}
+
+#[test]
+fn f6_moves_the_focus_between_the_panes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness();
+    h.state_mut().settings.show_queue = true;
+    open_dropped(&mut h, sample_png(dir.path(), "panes.png"));
+    let photo = (tr().viewer.a11y_name)("panes.png");
+    let f6 = |h: &mut Harness<'_, ApsophosApp>, modifiers| {
+        h.key_press_modifiers(modifiers, Key::F6);
+        h.run_steps(3);
+    };
+    f6(&mut h, egui::Modifiers::NONE);
+    assert!(focused(&h, Role::Button, tr().queue.add_files), "F6: the queue first");
+    f6(&mut h, egui::Modifiers::NONE);
+    assert!(focused(&h, Role::Image, &photo), "then the photo");
+    // the arrows move the view, and the focus stays on the photo
+    h.key_press(Key::ArrowLeft);
+    h.run_steps(2);
+    assert!(focused(&h, Role::Image, &photo), "an arrow took the focus away");
+    f6(&mut h, egui::Modifiers::NONE);
+    assert!(h.get_by_label(tr().params.light).is_focused(), "then the settings");
+    f6(&mut h, egui::Modifiers::SHIFT);
+    assert!(focused(&h, Role::Image, &photo), "Shift+F6 goes back");
+    // a hidden queue is skipped
+    h.state_mut().settings.show_queue = false;
+    h.run_steps(3);
+    f6(&mut h, egui::Modifiers::SHIFT);
+    assert!(h.get_by_label(tr().params.light).is_focused(), "round to the settings");
+    f6(&mut h, egui::Modifiers::NONE);
+    assert!(focused(&h, Role::Image, &photo), "round to the photo, past the hidden queue");
+}
+
+#[test]
+fn the_view_menu_moves_the_focus_too() {
+    let mut h = harness();
+    h.get_by_role_and_label(Role::Button, tr().menu.view).click();
+    h.run_steps(3);
+    // the menu entry shows its shortcut
+    h.get_by_label(&format!("{} F6", tr().menu.next_pane)).click();
+    h.run_steps(3);
+    // no image: the photo pane's control is the open button
+    assert!(focused(&h, Role::Button, tr().central.open_image));
 }
 
 /// A picture of the window, drawn with wgpu, for looking at the interface:
