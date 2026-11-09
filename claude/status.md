@@ -1,13 +1,45 @@
 # Apsophos — status of the work
 
 Updated on November 5, 2026 (language and workflow rows on November 7,
-release rows on November 8). It is where work resumes: last checked commit,
-work in progress, open points, decisions. Small postponed things are in
-`TIDY.md`.
+release rows on November 8, four blocks on November 9). It is where work
+resumes: last checked commit, work in progress, open points, decisions.
+Small postponed things are in `TIDY.md`.
 
 ## Last checked commit
 
-- `main` @ the merge of branch `release-package-2026-11-08` (November 8):
+- `main` @ `101b71a` (November 9): four blocks, each made by a separate
+  agent in its own worktree, then rebased on `main` one at a time, checked
+  with `scripts\check.bat` (all green: tests in release and in debug,
+  Clippy, cargo-deny) and with a green CI of its branch before merging:
+  - **Dependencies** (`d0918ad`): the nine Dependabot updates (sysinfo
+    0.40, sha2 0.11, md-5 0.11, dirs 7, opener 0.9; checkout 7.0.1,
+    setup-python 7.1.0, upload-artifact 7.0.2, action-gh-release 3.0.3).
+    sysinfo is wrapped in `crates/app/src/resources.rs`: unknown memory or
+    disk space is `None`, the check is skipped and the log says so.
+  - **Release** (`400a4d1`, `1581090`): `cargo xtask check` is the one
+    command of the checks; `check.bat` and the CI run it (tests in release
+    and in debug, Clippy, cargo-deny, required). Chosen over running
+    `check.ps1` with `pwsh` in the CI, because locally it runs on Windows
+    PowerShell 5.1. The release builds with `cargo auditable` and attaches
+    `SHA256SUMS.txt` and the provenance bundle.
+  - **Enlargement** (`3fc5244` … `e412f5a`): time estimate in the export
+    settings from the measured speed (per model and device, in the
+    settings); the model download resumes with HTTP `Range` (`.<name>.part`,
+    hash over the whole file, restart when the server does not resume);
+    the queue stays file by file (decision 7 of
+    `docs/decisions/0001-ai-upscaling.md`); exported files carry their own
+    size in the EXIF pixel dimensions.
+  - **Interface** (`99b7c05` … `101b71a`): F6 / Shift+F6 between queue,
+    photo and parameters; a discreet notice under an estimated JPEG quality
+    of 50 (IJG scale, from the luminance quantisation table); a *Models*
+    section in the About window (SCUNet and SwinIR cards, installed files);
+    the point of the enlargement preview chosen with a click (the centre of
+    the view stays the default).
+  To try by hand: the estimate before and after an enlargement, a download
+  interrupted and resumed, EXIF dimensions of an enlarged JPEG, F6, the
+  JPEG notice at quality 30 and 90, Information ▸ Models, the preview
+  point.
+- Before: the merge of branch `release-package-2026-11-08` (November 8):
   the first release run (tag `v0.1.0`) failed at the winget step because
   `package.bat nonvidia` asked for `onnxruntime_providers_shared.dll`,
   which only the TensorRT for RTX build makes, and then exited with 0
@@ -478,52 +510,17 @@ on November 2 (branch `instructions-2026-11-02`).
 
 ## Open points
 
-- **GitHub Actions does not start the jobs** (November 7): the runs of
-  `main` (`093986c`, November 5) and of branch `docs-english` failed
-  without running any step; GitHub's note says that recent account
-  payments failed or the spending limit must be raised (Settings ▸
-  Billing & plans). Not a code problem; until it is fixed, branches merge
-  only with the owner's consent on the local checks.
-- **Publish the enlargement models:** after the push, run by hand Actions ▸
-  Models ▸ Run workflow and publish the `models-1` draft. Until it is
-  published (and the repository is not public), the download answers «not
-  published yet». If the workflow reports a file different from
-  `models/upscalers.txt`, the conversion in CI is not the same as the local
-  one: do not publish.
+- **Release 0.1.0** (November 8): the *Release* run of tag `v0.1.0`
+  (`6a3fb95`) made the draft with the DirectML zip and installer; the
+  *Models* run made the `models-1` draft. Both drafts are published by
+  the owner; until `models-1` is published the in-app download fails. The
+  blocks of November 9 come after the tag and go in the next version.
 - **SCUNet regenerated with the new builder:** the graph now uses 4-D
   attention (same result to the last bit on the CPU, with fake weights).
   The models in `models\` are still the old ones; the release workflow
   regenerates them: before the next release regenerate them locally (the
   KAIR weights are needed) and run the self-test again.
 
-- **Public repository, settings to make on GitHub** (they are not in the
-  code): two-factor authentication on the account; no collaborators; a
-  ruleset on `main` that forbids deletion and forced pushes and requires a
-  green CI; Actions with approval for all external collaborators and a
-  read-only default token; *Private vulnerability reporting* and
-  *Dependabot alerts* on; Wiki and Discussions off if not needed. Before
-  making it public, ask GitHub support to purge the cache of the old
-  commits (history rewritten on November 2).
-
-- **History rewritten, to publish with a forced push.** On November 2 all
-  the commits of `main` were rewritten with `git filter-branch`: author and
-  committer `MR <MR1999develop@users.noreply.github.com>` (also the two
-  signed earlier by Claude), and in the files of every commit removed full
-  name, GitHub user name (repository addresses → `OWNER`), local paths and
-  the name in sentences (→ "the owner"). Then a second pass with
-  `git filter-repo` (`--replace-text` and `--replace-message` on the same
-  texts) and the cleanup: removed `origin/main` (the local copy of GitHub's
-  old history), the reflog, the unreachable objects and the safety bundle.
-  Verified on all the repository's objects: the only personal data left is
-  the noreply email, on purpose. Messages and dates unchanged; all hashes
-  changed (those cited in this document are the old ones). Publication, by
-  hand:
-  `git push --force-with-lease=main:d02c02e6c06bdad5fc26c4d9e67b9485f7b9fd4f origin main`
-  (the hash is the last published `main`: the push is refused if something
-  changed on GitHub in the meantime). After the push GitHub may keep the
-  old commits reachable by hash for a while; the other local copies must
-  be cloned again. The repository has `user.name MR` and the noreply email
-  in its git configuration.
 - Since November 2 the work continues with Claude Code on the PC
   (instructions in `CLAUDE.md`); removed `scripts\pull-claude.bat`, which
   served only the cloud sessions.

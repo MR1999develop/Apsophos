@@ -4,7 +4,8 @@ Small issues found in the reviews of October 2026 and postponed until that
 code changes again. Every item says why it waits. The overall state of the
 work (done, checked, open) is in `claude/status.md`.
 
-Updated on November 2, 2026 (translated into English on November 7).
+Updated on November 2, 2026 (translated into English on November 7; the
+items done on November 9 removed, new ones added).
 
 ## Code
 
@@ -84,65 +85,52 @@ Updated on November 2, 2026 (translated into English on November 7).
   messages (for example when DirectML runs out of memory) reach the log as
   unreadable text, probably in Windows' code page and not in UTF-8. It was
   there before; the real error reaches the app anyway.
-- **Model hashes:** the models in `models\` are not verified with a hash. A
-  manifest with the SHA-256 of the models made by the scripts could warn if
-  a model does not match.
-- **Heavily compressed JPEGs:** a discreet notice when quantisation is
-  strong (block noise is not what the network is trained for).
-- **F6 between panels** (Windows convention) and a command to move the
-  focus between queue, photo and parameters.
+- **Model hashes in the program:** the release lists the SHA-256 of the
+  package and of its SCUNet models (`SHA256SUMS.txt`), but the program
+  does not check the models in `models\` against them.
 - **Settings:** the file is the serialisation of `Settings`; fields a new
   version does not know are lost on saving. To fix if the settings grow.
-- **CI and local check:** the CI calls the cargo commands one by one, the
-  local check calls them from `check.ps1`; a shared `cargo xtask check`
-  would guarantee they are the same. The release workflow lacks
-  `cargo auditable build` (dependencies readable from the binary).
-  They also differ in the build: `check.bat` tests in release, the CI in
-  debug, where egui's debug assertions run. On November 7 two font tests
-  passed locally and failed in the CI (an undrained `TexturesDelta`);
-  until the shared command exists, run `cargo test --workspace` (debug)
-  too before publishing a branch that touches egui code.
 
 ## Enlargement (November 5)
 
-- **EXIF pixel dimensions** (`PixelXDimension`, `PixelYDimension`): the
-  enlarged file keeps the original's. Programs use the image's real
-  dimensions; updating them requires rewriting a value in the EXIF sub-IFD,
-  which today is copied as it is.
 - **TIFF and JPEG collected, not streamed:** the `tiff` crate compresses
   only an image written in one go (strips written one at a time come out
   uncompressed under a Deflate tag), so the converted samples are collected
   in memory (6 bytes per pixel in 16 bit). When the crate compresses
   strips, write them in bands; BigTIFF for files over 4 GB (today rejected
   before the work, with the 16-bit suggestion).
-- **Preview at the centre of the view:** darktable chooses the point with a
-  click; here the view is moved. A picker on the viewer is still to do.
 - **DirectML on slower GPUs:** the small tiles (320 px for 2×, 256 for 4×)
   stay below the about 2 s Windows grants a submission on a laptop RTX
   3050; integrated graphics may exceed them and reset the GPU (887A0006).
   Measure the time of the first pass and, if it is close to the limit,
   switch to the CPU saying so, or generate even smaller tiles.
-- **Time estimate before starting:** the remaining time appears after the
-  first tile; the export settings could show an estimate from the measured
-  speed (as for the SCUNet tiles).
-- **Queue with enlargement:** for every file SCUNet is loaded first and then
-  SwinIR (one network at a time in GPU memory, a few seconds per load with
-  the saved engines). If it weighs, group them: first all the noise
-  reductions, then all the enlargements.
 - **The faithful 2× gains little** over Catmull-Rom in the converter's
   synthetic test (0.04 dB with camera blur; 1.8 dB in the engine test):
   judge it on real photos with the preview. Alternative: SwinIR "classical"
   2× (trained on bicubic downscaling), more faithful on sharp images and
   less on blurred ones.
-- **Download not resumed:** if it is interrupted, the complete files stay
-  and the half one is deleted; it restarts from that file (HTTP Range not
-  used).
 - **Proxy:** `ureq` uses only the proxy from the environment variables
   (`HTTPS_PROXY`), not the one set in Windows; with a corporate proxy the
   download fails with a message, and the models can be copied by hand into
   `%LOCALAPPDATA%\Apsophos\models`.
-- **Model card** shown only in the export settings; a "Models" item in the
-  About window would gather it for all of them.
+- **Old temporary files of the download**: versions before November 9 named
+  the partial file `.<name>.<pid>-<n>.part`; one left by a crash stays in
+  the download folder, and nobody removes it.
+- **The time estimate leaves out loading the model** (4–5 s), which the
+  measure does not include.
+- **The model cards are in English** in the Italian interface (they come
+  from the engine), and the card does not tell the faithful model from the
+  generated-detail one (`card()` depends only on the factor).
+
+## Interface (November 9)
+
+- **JPEG quality threshold**: the notice appears below an estimated
+  quality of 50 (IJG scale); judge it on real photos.
+- **F6 with the queue running** goes to "Add files…", which is disabled, so
+  the focus does not arrive; it should go to the first enabled control.
+- **The slider of the preview window** has no accessible name.
+- **Unknown memory or disk space** (the system does not answer) is only in
+  the log: the checks are skipped. Say it in the interface too.
 
 ## Release
 
@@ -165,6 +153,16 @@ Updated on November 2, 2026 (translated into English on November 7).
 
 ## Checks
 
+- **Pinned tool versions outside Dependabot**: cargo-deny 0.20.2 (CI) and
+  cargo-auditable 0.7.7 (release) are installed at a fixed version that
+  Dependabot does not update: check them by hand from time to time.
+- **No daily dependency scan** and no `cargo audit bin` on the released
+  program; `SHA256SUMS.txt` is covered only by the provenance attestation,
+  not signed on its own.
+- **Shared build folder between worktrees gives false results**: cargo
+  names the workspace crates by their relative path, so two worktrees with
+  one `CARGO_TARGET_DIR` reuse each other's builds. One folder per worktree.
+
 - **Action hashes in the workflows**: Dependabot updates them with a weekly
   pull request; before merging it, look at what changes in the action (the
   release diff), as for a dependency.
@@ -177,8 +175,8 @@ Updated on November 2, 2026 (translated into English on November 7).
   app modules without egui (`color`, `files`, `format`, `inspect`,
   `logging`) and the core, io and engine crates build and are tested there
   too.
-- **cargo-deny** runs in CI (`deny.toml`) and in `scripts\check.bat` when
-  installed (`cargo install cargo-deny`). If it reports a licence not on the
+- **cargo-deny** runs in `cargo xtask check` (`deny.toml`), so in CI and in
+  `scripts\check.bat`; it is required (`cargo install --locked cargo-deny`). If it reports a licence not on the
   list, check that it is compatible with GPL-3.0 before adding it.
   Installed and green since November 2.
 - **Four advisories ignored in `deny.toml`**: crates no longer maintained,
