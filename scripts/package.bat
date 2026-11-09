@@ -84,10 +84,12 @@ copy /y packaging\licenses\*.txt "%OUT%\licenses\" >nul
 
 echo [4/4] Making the zip...
 if exist "dist\%NAME%.zip" del /q "dist\%NAME%.zip"
-tar -a -c -f "dist\%NAME%.zip" -C dist "%NAME%" 2>target\package.log
+rem Windows' own tar (bsdtar) by its full path: a GNU tar earlier on PATH
+rem (Git Bash) would write an uncompressed tar under the .zip name
+"%SystemRoot%\System32\tar.exe" -a -c -f "dist\%NAME%.zip" -C dist "%NAME%" 2>target\package.log
 if errorlevel 1 (
   echo     tar failed ^(details in target\package.log^), trying PowerShell...
-  powershell -NoProfile -Command "Compress-Archive -Path 'dist\%NAME%' -DestinationPath 'dist\%NAME%.zip'" >>target\package.log 2>&1
+  "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "Compress-Archive -Path 'dist\%NAME%' -DestinationPath 'dist\%NAME%.zip'" >>target\package.log 2>&1
 )
 
 echo.
