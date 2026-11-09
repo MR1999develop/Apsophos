@@ -34,7 +34,7 @@ Trust boundaries, from the least trusted:
 | Boundary | Threat | Kind |
 |---|---|---|
 | Image | Huge dimensions or decompression bombs exhaust memory | Denial of service |
-| Image | Malformed TIFF/EXIF/XMP/JPEG segments crash or hang a parser of ours (`meta.rs`, `jpeg_app.rs`, `icc.rs`) | Denial of service |
+| Image | Malformed TIFF/EXIF/XMP/JPEG segments crash or hang a parser of ours (`meta.rs`, `jpeg_app.rs`, `jpeg_quality.rs`, `icc.rs`) | Denial of service |
 | Image | A malformed ICC profile exploits Little CMS (C, in process) | Elevation, tampering |
 | Image | A crafted name or metadata makes the export write outside its folder or over the original | Tampering |
 | Image | Metadata shown in the interface as text that looks like a program message | Spoofing |
@@ -52,7 +52,8 @@ Trust boundaries, from the least trusted:
 - **Size before decoding:** the dimensions are checked against
   `ReadLimits` (memory available, a megapixel cap) from the header, before
   any pixel is decoded; metadata values are capped (`MAX_VALUE_BYTES`, 4 MB;
-  at most 1,000 entries per IFD; APP segments of a JPEG at most 8 MB in all).
+  at most 1,000 entries per IFD; the header segments of a JPEG, APP and
+  quantisation tables, at most 8 MB in all).
 - **Our parsers return errors, never panic:** they read through bounded
   slices with `get`, and property tests feed them random bytes
   (`denoise_io`); a panic in the worker becomes a failed job, not a crash.

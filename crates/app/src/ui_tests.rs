@@ -41,6 +41,7 @@ fn sample_png(dir: &Path, name: &str) -> PathBuf {
         xmp_extended: None,
         dpi: None,
         notes: vec![],
+        jpeg_quality: None,
     };
     let path = dir.join(name);
     denoise_io::write(&path, &img, None, &info, &ExportOptions::default()).unwrap();
@@ -230,6 +231,28 @@ fn queue_context_menu_opens_an_item() {
     assert!(h.query_by_label(tr().queue.open_in_viewer).is_none(), "the context menu is still open");
     step_until(&mut h, "the queue item to open", |app| app.doc.is_some());
     assert!(h.state().doc.as_ref().is_some_and(|d| d.path.ends_with("second.png")));
+}
+
+#[test]
+fn a_heavily_compressed_jpeg_is_pointed_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = sample_png(dir.path(), "source.png");
+    let picture = denoise_io::read(&png, &denoise_io::ReadLimits::default()).unwrap();
+    let jpeg = |quality: u8| {
+        let path = dir.path().join(format!("q{quality}.jpg"));
+        let options = ExportOptions { format: denoise_io::ExportFormat::Jpeg, jpeg_quality: quality };
+        denoise_io::write(&path, &picture.rgb, None, &picture.info, &options).unwrap();
+        path
+    };
+    let notice = "Heavily compressed JPEG";
+    assert!((tr().info.heavy_jpeg)(30).starts_with(notice));
+    let mut h = harness();
+    open_dropped(&mut h, jpeg(30));
+    h.get_by_label_contains(notice);
+    // a JPEG of ordinary quality says nothing
+    h.state_mut().close_image();
+    open_dropped(&mut h, jpeg(90));
+    assert!(h.query_by_label_contains(notice).is_none());
 }
 
 /// Whether a widget with this role and name has the keyboard focus (the

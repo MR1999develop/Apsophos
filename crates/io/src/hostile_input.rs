@@ -1,5 +1,5 @@
 //! Hostile input for the parsers written in this crate (TIFF and EXIF
-//! directories, JPEG APP segments, ICC headers): random bytes, and valid
+//! directories, JPEG APP and quantisation segments, ICC headers): random bytes, and valid
 //! data with random bytes changed, must give a result or nothing, never a
 //! panic or an allocation beyond the caps. A stand-in for fuzzing, which
 //! needs a nightly compiler; each failing input found here becomes a plain
@@ -7,7 +7,7 @@
 
 use proptest::prelude::*;
 
-use crate::{exif, icc, jpeg_app, meta};
+use crate::{exif, icc, jpeg_app, jpeg_quality, meta};
 
 /// Up to a few kilobytes: enough for every structure the parsers walk.
 fn bytes() -> impl Strategy<Value = Vec<u8>> {
@@ -97,6 +97,24 @@ proptest! {
         let main = data.get(4 + 2 + jpeg_app::XMP_HEADER.len()..).unwrap_or_default();
         if let Some(guid) = jpeg_app::extended_guid(main) {
             let _ = app.extended(&guid);
+        }
+    }
+
+    #[test]
+    fn quantisation_tables_of_random_bytes(data in bytes()) {
+        let _ = jpeg_quality::dqt_tables(&data);
+        let mut file = vec![0xFF, 0xD8, 0xFF, 0xDB];
+        file.extend(u16::try_from(data.len() + 2).unwrap_or(u16::MAX).to_be_bytes());
+        file.extend(&data);
+        let _ = jpeg_app::AppData::read(&mut file.as_slice());
+    }
+
+    #[test]
+    fn quantisation_steps_of_any_value(table in proptest::array::uniform32(any::<u16>()), rest in any::<u16>()) {
+        let mut full = [rest; 64];
+        full[..32].copy_from_slice(&table);
+        if let Some(q) = crate::JpegQuality::estimate(&full) {
+            prop_assert!((1..=100).contains(&q.get()));
         }
     }
 

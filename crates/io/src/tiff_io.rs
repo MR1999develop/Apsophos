@@ -126,6 +126,7 @@ pub fn read(path: &Path, limits: &ReadLimits) -> Result<Picture, IoError> {
         xmp_extended: None,
         dpi,
         notes,
+        jpeg_quality: None,
     };
     Ok(Picture { rgb: image, alpha, info })
 }
@@ -349,6 +350,7 @@ mod tests {
             xmp_extended: None,
             dpi: None,
             notes: vec![],
+            jpeg_quality: None,
         }
     }
 

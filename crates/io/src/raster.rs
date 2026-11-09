@@ -43,16 +43,16 @@ pub fn read(path: &Path, format: FileFormat, limits: &ReadLimits) -> Result<Pict
     let exif = dec.exif_metadata().map_err(decode_err)?.map(|e| exif::strip_header(&e).to_vec());
     let xmp = dec.xmp_metadata().map_err(decode_err)?.and_then(xmp_packet);
     let img = DynamicImage::from_decoder(dec).map_err(decode_err)?;
-    // what the decoder does not give: resolution and extended XMP, from the
-    // file's headers
-    let (dpi_in_file, xmp_extended) = match format {
+    // what the decoder does not give: resolution, extended XMP and the JPEG
+    // quantisation, from the file's headers
+    let (dpi_in_file, xmp_extended, jpeg_quality) = match format {
         FileFormat::Jpeg => {
             let app = File::open(path).map(|f| AppData::read(&mut BufReader::new(f))).unwrap_or_default();
             let extended = xmp.as_deref().and_then(jpeg_app::extended_guid).and_then(|g| app.extended(&g));
-            (app.dpi, extended)
+            (app.dpi, extended, app.quality)
         }
-        FileFormat::Png => (png_dpi(path), None),
-        FileFormat::Tiff => (None, None),
+        FileFormat::Png => (png_dpi(path), None, None),
+        FileFormat::Tiff => (None, None, None),
     };
     // the EXIF resolution first: it is the one cameras and editors set
     let dpi = exif.as_deref().and_then(meta::from_exif).and_then(|m| m.dpi).or(dpi_in_file);
@@ -77,7 +77,11 @@ pub fn read(path: &Path, format: FileFormat, limits: &ReadLimits) -> Result<Pict
     let rgb = Image::from_rgb(w, h, img.to_rgb32f().into_raw()).map_err(|e| IoError::Decode(e.to_string()))?;
     let orientation = exif.as_deref().map_or(1, exif::orientation);
     let (rgb, alpha) = orient::apply(rgb, alpha, orientation);
-    Ok(Picture { rgb, alpha, info: SourceInfo { format, bit_depth, gray, icc, exif, xmp, xmp_extended, dpi, notes } })
+    Ok(Picture {
+        rgb,
+        alpha,
+        info: SourceInfo { format, bit_depth, gray, icc, exif, xmp, xmp_extended, dpi, notes, jpeg_quality },
+    })
 }
 
 /// The resolution of a PNG's pHYs chunk, when it is in pixels per metre.
@@ -249,6 +253,7 @@ mod tests {
             xmp_extended: None,
             dpi: None,
             notes: vec![],
+            jpeg_quality: None,
         }
     }
 
@@ -272,6 +277,24 @@ mod tests {
         assert_eq!((back.rgb.width(), back.rgb.height()), (16, 8), "orientation already applied: no rotation");
         assert_eq!(icc::icc_description(back.info.icc.as_deref().unwrap()).as_deref(), Some("Test RGB"));
         assert_eq!(back.info.exif.as_deref().map(exif::orientation), Some(1));
+    }
+
+    #[test]
+    fn jpeg_quality_is_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let img = picture(16, 8);
+        for q in [30, 75, 95] {
+            let p = dir.path().join(format!("q{q}.jpg"));
+            let opts = ExportOptions { format: ExportFormat::Jpeg, jpeg_quality: q };
+            write_file(&p, &img, None, &info(FileFormat::Jpeg), &opts).unwrap();
+            let got = read_file(&p, &ReadLimits::default()).unwrap().info.jpeg_quality.unwrap();
+            assert!(got.get().abs_diff(q) <= 2, "written at {q}, estimated {}", got.get());
+            assert_eq!(got.is_heavy(), q < 50);
+        }
+        // other formats have none
+        let p = dir.path().join("a.png");
+        write_file(&p, &img, None, &info(FileFormat::Png), &ExportOptions::default()).unwrap();
+        assert_eq!(read_file(&p, &ReadLimits::default()).unwrap().info.jpeg_quality, None);
     }
 
     #[test]

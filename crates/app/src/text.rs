@@ -279,6 +279,9 @@ pub struct Info {
     pub bit_depth: fn(BitDepth) -> &'static str,
     /// `Partially denoised: 3 of 12 tiles.`, numbers already formatted.
     pub partial: fn(&str, &str) -> String,
+    /// A heavily compressed JPEG: what, why it matters, what to do; from
+    /// the estimated quality (1 to 100).
+    pub heavy_jpeg: fn(u8) -> String,
 }
 
 pub struct Queue {
@@ -764,6 +767,13 @@ pub static EN: Texts = Texts {
             BitDepth::F32 => "32-bit float",
         },
         partial: |done, total| format!("Partially denoised: {done} of {total} tiles."),
+        heavy_jpeg: |q| {
+            format!(
+                "Heavily compressed JPEG (quality about {q} of 100). The network learned milder compression: the \
+                 8 × 8 pixel blocks may stay or turn into blotches. If you have a less compressed copy (the camera's \
+                 JPEG, a RAW or a TIFF), start from that."
+            )
+        },
     },
     queue: Queue {
         title: "Queue",
@@ -1225,6 +1235,13 @@ pub static IT: Texts = Texts {
             BitDepth::F32 => "32 bit in virgola mobile",
         },
         partial: |done, total| format!("Rumore ridotto in parte: {done} riquadri su {total}."),
+        heavy_jpeg: |q| {
+            format!(
+                "JPEG molto compresso (qualità circa {q} su 100). La rete ha imparato compressioni più leggere: i \
+                 blocchi di 8 × 8 pixel possono restare o diventare macchie. Se hai una copia meno compressa (il JPEG \
+                 della fotocamera, un RAW o un TIFF), parti da quella."
+            )
+        },
     },
     queue: Queue {
         title: "Coda",

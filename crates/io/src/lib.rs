@@ -22,6 +22,7 @@ mod exif;
 mod hostile_input;
 mod icc;
 mod jpeg_app;
+mod jpeg_quality;
 mod meta;
 mod orient;
 mod raster;
@@ -36,6 +37,7 @@ use serde::{Deserialize, Serialize};
 
 pub use error::IoError;
 pub use icc::icc_description;
+pub use jpeg_quality::JpegQuality;
 
 /// Supported file formats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +158,8 @@ pub struct SourceInfo {
     pub dpi: Option<Dpi>,
     /// Notes to show the user (e.g. ignored pages).
     pub notes: Vec<String>,
+    /// How strongly a JPEG source was compressed, when its tables tell.
+    pub jpeg_quality: Option<JpegQuality>,
 }
 
 /// Image read from a file.
@@ -550,6 +554,7 @@ mod tests {
             xmp_extended: None,
             dpi: None,
             notes: vec![],
+            jpeg_quality: None,
         }
     }
 

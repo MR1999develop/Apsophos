@@ -330,6 +330,12 @@ impl ApsophosApp {
                 ui.end_row();
             }
         });
+        if let Some(q) = info.jpeg_quality.filter(|q| q.is_heavy()) {
+            // discreet: an icon and words in the panel, never a colour
+            ui.add_space(SPACE_S);
+            let text = symbol::with(symbol::INFO, (tx.heavy_jpeg)(q.get()));
+            ui.add(egui::Label::new(RichText::new(text).color(t.text)).wrap());
+        }
         if doc.done_count() > 0 && !doc.is_complete() && !self.is_running() {
             ui.add_space(SPACE_S);
             ui.label(weak((tx.partial)(&format::int(doc.done_count()), &format::int(doc.plan.len())), t));

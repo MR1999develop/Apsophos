@@ -279,6 +279,7 @@ mod tests {
             xmp_extended: None,
             dpi: None,
             notes: vec![],
+            jpeg_quality: None,
         }
     }
 

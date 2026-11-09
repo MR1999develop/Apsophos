@@ -157,6 +157,7 @@ fn check_upscaler(out: &mut String, files: &[PathBuf], device: Device, factor: F
         xmp_extended: None,
         dpi: None,
         notes: vec![],
+        jpeg_quality: None,
     };
     let opts = ExportOptions { format: ExportFormat::SameAsSource, jpeg_quality: 90 };
     let target = Output { path: &path, info: &info, opts: &opts };

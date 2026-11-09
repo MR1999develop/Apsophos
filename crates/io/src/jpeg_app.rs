@@ -1,5 +1,6 @@
-//! What a JPEG keeps in its APP segments besides EXIF and ICC: the JFIF
-//! print resolution and the "extended XMP".
+//! What a JPEG keeps in its header segments besides EXIF and ICC: the JFIF
+//! print resolution, the "extended XMP" and the luminance quantisation
+//! table (for [JpegQuality]).
 //!
 //! One APP1 segment holds at most 65,533 bytes, so a larger XMP packet is
 //! split (XMP specification part 3, 1.1.3.1): the main packet, in the usual
@@ -13,6 +14,7 @@ use std::io::Read;
 
 use md5::{Digest, Md5};
 
+use crate::jpeg_quality::{dqt_tables, JpegQuality};
 use crate::meta::MAX_VALUE_BYTES;
 use crate::Dpi;
 
@@ -33,12 +35,15 @@ const CHUNK_DATA: usize = MAX_APP_SEGMENT - EXTENSION_HEADER.len() - GUID_LEN - 
 pub(crate) struct AppData {
     /// From the JFIF segment, when it gives dots per inch or per centimetre.
     pub dpi: Option<Dpi>,
+    /// From the first luminance table (id 0) of the DQT segments.
+    pub quality: Option<JpegQuality>,
     /// Chunks of extended XMP: GUID, full length, offset, data.
     chunks: Vec<(String, u32, u32, Vec<u8>)>,
 }
 
 impl AppData {
-    /// Reads the segments before the image data. Stops quietly at anything
+    /// Reads the segments before the image data (within the caps on their
+    /// total size). Stops quietly at anything
     /// unexpected: what was read until then is kept.
     pub fn read(jpeg: &mut impl Read) -> Self {
         let mut out = Self::default();
@@ -68,6 +73,10 @@ impl AppData {
             }
             match marker {
                 0xE0 => out.dpi = out.dpi.or_else(|| jfif_dpi(&payload)),
+                0xDB if out.quality.is_none() => {
+                    let luma = dqt_tables(&payload).into_iter().find(|(id, _)| *id == 0);
+                    out.quality = luma.and_then(|(_, table)| JpegQuality::estimate(&table));
+                }
                 0xE1 => {
                     if let Some(chunk) = extension_chunk(&payload) {
                         out.chunks.push(chunk);
@@ -233,6 +242,25 @@ mod tests {
         let merged = String::from_utf8(merged(&main, &ext).unwrap()).unwrap();
         assert!(merged.contains("HasExtendedXMP") && merged.contains("crs:History"), "{merged}");
         assert_eq!(merged.matches("</rdf:RDF>").count(), 1);
+    }
+
+    #[test]
+    fn quality_from_the_first_luminance_table() {
+        let table = |id: u8, q: u8| {
+            let mut p = vec![id];
+            p.extend(crate::jpeg_quality::tests::ijg_table(q).iter().map(|&v| u8::try_from(v).unwrap()));
+            p
+        };
+        // the chroma table (id 1) first: only id 0 counts, and the first one
+        let file = jpeg_of(&[(0xDB, table(1, 20)), (0xDB, table(0, 40)), (0xDB, table(0, 90))]);
+        let q = AppData::read(&mut file.as_slice()).quality.unwrap();
+        assert!(q.get().abs_diff(40) <= 1 && q.is_heavy(), "{q:?}");
+        // a damaged table: no quality, the rest is still read
+        let mut jfif = b"JFIF\0\x01\x02".to_vec();
+        jfif.extend([1, 1, 44, 1, 44, 0, 0]);
+        let file = jpeg_of(&[(0xDB, vec![0x00, 1, 2, 3]), (0xE0, jfif)]);
+        let app = AppData::read(&mut file.as_slice());
+        assert!(app.quality.is_none() && app.dpi.is_some());
     }
 
     #[test]
