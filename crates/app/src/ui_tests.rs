@@ -234,6 +234,51 @@ fn queue_context_menu_opens_an_item() {
 }
 
 #[test]
+fn a_click_chooses_the_point_of_the_enlargement_preview() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness();
+    open_dropped(&mut h, sample_png(dir.path(), "point.png"));
+    let te = &tr().export;
+    h.state_mut().windows.upscale_preview = true;
+    h.run_steps(3);
+    // not denoised: the button says why it cannot be used
+    assert!(h.get_by_label(te.preview_pick).accesskit_node().is_disabled());
+    // choosing (as the button does once the photo is denoised), then Esc
+    let name = (tr().viewer.a11y_name)("point.png");
+    // the hint over the photo, as a screen reader hears it
+    let hint = |h: &Harness<'_, ApsophosApp>| {
+        let photo = h.get_by_role_and_label(Role::Image, &name);
+        photo.accesskit_node().description().is_some_and(|d| d.starts_with(te.preview_picking))
+    };
+    h.state_mut().pick_preview_point();
+    h.run_steps(3);
+    assert!(hint(&h));
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert!(!h.state().picking_preview_point && !hint(&h));
+    // choosing again, then a click on the photo: that point, and the choice
+    // ends; the small photo is zoomed in to fill the view
+    h.state_mut().settings.reduce_motion = true;
+    h.state_mut().view.set_zoom_percent(2000.0);
+    h.state_mut().pick_preview_point();
+    h.run_steps(3);
+    let photo = h.get_by_role_and_label(Role::Image, &name).rect();
+    // right of the centre, clear of the preview window in the middle
+    let at = photo.center() + egui::vec2(photo.width() * 0.4, 0.0);
+    h.hover_at(at);
+    h.run_steps(1);
+    h.drag_at(at);
+    h.run_steps(1);
+    h.drop_at(at);
+    h.run_steps(3);
+    let state = h.state();
+    assert!(!state.picking_preview_point);
+    let (x, y) = state.preview_point.expect("a point was chosen").pixel(48, 32);
+    // right of the centre of the 48 × 32 px photo, at its height
+    assert!(x > 24 && (14..=17).contains(&y), "({x}, {y})");
+}
+
+#[test]
 fn the_about_window_lists_the_models() {
     let mut h = harness();
     h.state_mut().windows.about = true;

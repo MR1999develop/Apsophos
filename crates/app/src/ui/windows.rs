@@ -134,7 +134,8 @@ impl ApsophosApp {
         });
         self.windows.export = open;
         if want_preview {
-            self.preview_upscale();
+            // from the export settings: the centre of the view, the default
+            self.preview_upscale(None);
         }
         match download_action {
             Some(DownloadAction::Start(pack)) => self.start_download(pack),
@@ -215,13 +216,21 @@ impl ApsophosApp {
         let t = self.tokens;
         let mut open = self.windows.upscale_preview;
         let transform = self.doc.as_ref().map(|d| d.display.shared_transform());
+        let denoised = self.doc.as_ref().is_some_and(crate::document::Document::is_complete);
+        let (picking, at_point) = (self.picking_preview_point, self.preview_point.is_some());
+        let mut pick = false;
         widgets::dialog(ctx, te.preview_title).open(&mut open).resizable(true).show(ctx, |ui| {
+            // the point: the centre of the view by default, or one clicked
+            let r = ui.add_enabled(denoised, egui::Button::new(te.preview_pick).selected(picking));
+            pick = r.on_hover_text(te.preview_pick_tip).on_disabled_hover_text(te.preview_needs_denoise).clicked();
+            ui.add_space(SPACE_S);
             match &mut self.preview {
                 UpscalePreview::None => {}
                 UpscalePreview::Computing => {
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(weak(te.preview_computing, &t));
+                        let what = if at_point { te.preview_computing_point } else { te.preview_computing };
+                        ui.label(weak(what, &t));
                     });
                 }
                 UpscalePreview::Failed(e) => {
@@ -254,9 +263,18 @@ impl ApsophosApp {
                 }
             }
         });
+        if pick {
+            // the button again leaves the choice, as Esc does
+            if picking {
+                self.picking_preview_point = false;
+            } else {
+                self.pick_preview_point();
+            }
+        }
         if !open {
-            // closed: the textures go with it
+            // closed: the textures and the choice of a point go with it
             self.preview = UpscalePreview::None;
+            self.picking_preview_point = false;
         }
         self.windows.upscale_preview = open;
     }

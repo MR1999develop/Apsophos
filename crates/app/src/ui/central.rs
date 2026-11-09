@@ -26,11 +26,15 @@ impl ApsophosApp {
                 show_original: self.show_original,
                 reduce_motion: self.settings.reduce_motion,
                 working_on: self.working_on(),
+                picking_point: self.picking_preview_point,
             };
             if let Some(doc) = self.doc.as_mut() {
                 let out = viewer::show(ui, &mut self.view, doc, &input);
                 self.hover = out.hover;
                 self.panes.land_on(Pane::Photo, &out.response);
+                if let Some(point) = out.picked {
+                    self.preview_upscale(Some(point));
+                }
             } else {
                 self.hover = None;
                 self.empty_state(ui, &t);

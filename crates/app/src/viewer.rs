@@ -44,6 +44,14 @@ pub struct ImagePos {
     pub y: f32,
 }
 
+impl ImagePos {
+    /// The pixel at this position in an image of `width × height`, the
+    /// nearest one when the position is outside.
+    pub fn pixel(self, width: usize, height: usize) -> (usize, usize) {
+        (num::floor_to_usize(self.x, width.saturating_sub(1)), num::floor_to_usize(self.y, height.saturating_sub(1)))
+    }
+}
+
 fn texture_options() -> TextureOptions {
     TextureOptions {
         // sharp pixels above 100 %, smooth when zoomed out
@@ -441,6 +449,9 @@ pub struct ViewerInput<'a> {
     pub reduce_motion: bool,
     /// Tile the network is processing, to highlight.
     pub working_on: Option<PixelRect>,
+    /// A click chooses a point (of the enlargement preview) instead of
+    /// moving or zooming the view.
+    pub picking_point: bool,
 }
 
 /// Name and state of the image area for screen readers: it is drawn by
@@ -460,6 +471,8 @@ fn describe(response: &egui::Response, view: &ViewState, doc: &Document, input: 
         &format::int(doc.done_count()),
         &format::int(doc.plan.len()),
     );
+    // the hint drawn over the photo while a click chooses a point
+    let state = if input.picking_point { format!("{}. {state}", tr().export.preview_picking) } else { state };
     response.ctx.accesskit_node_builder(response.id, |node| node.set_description(state));
 }
 
@@ -468,6 +481,8 @@ pub struct ViewerOutput {
     pub hover: Option<(usize, usize)>,
     /// The image area, which can hold the keyboard focus (F6).
     pub response: egui::Response,
+    /// The point of the photo clicked while choosing one.
+    pub picked: Option<ImagePos>,
 }
 
 /// Draws the image and handles mouse and wheel.
@@ -490,8 +505,10 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         if (factor - 1.0).abs() > 1e-4 {
             view.zoom_by(factor, pos);
         }
-        let near_split = split_on && (pos.x - split_x).abs() <= SPLIT_GRAB_PX;
-        if near_split || view.dragging_split {
+        let near_split = split_on && !input.picking_point && (pos.x - split_x).abs() <= SPLIT_GRAB_PX;
+        if input.picking_point && !response.dragged() {
+            ctx.set_cursor_icon(CursorIcon::Crosshair);
+        } else if near_split || view.dragging_split {
             ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
         } else if response.dragged() {
             ctx.set_cursor_icon(CursorIcon::Grabbing);
@@ -514,7 +531,13 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
     if response.drag_stopped() {
         view.dragging_split = false;
     }
-    if response.double_clicked() {
+    // a click while choosing a point picks it; the view can still be dragged
+    let picked = (input.picking_point && response.clicked())
+        .then(|| response.interact_pointer_pos())
+        .flatten()
+        .map(|p| view.to_image(p))
+        .filter(|p| p.x >= 0.0 && p.y >= 0.0 && p.x < size.x && p.y < size.y);
+    if response.double_clicked() && !input.picking_point {
         if (view.zoom_percent() - 100.0).abs() < 1.0 {
             view.request_fit();
         } else {
@@ -560,7 +583,11 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         }
     }
 
-    if split_on {
+    if input.picking_point {
+        // what a click does now, where the before/after labels stand
+        let at = pos2(canvas.center().x, canvas.top() + SPACE_M);
+        badge(&painter, at, egui::Align2::CENTER_TOP, tr().export.preview_picking, t);
+    } else if split_on {
         draw_split(&painter, canvas, split_x, &input.result_view.label(), t);
     } else if input.show_original {
         badge(
@@ -588,7 +615,7 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         (ip.x >= 0.0 && ip.y >= 0.0 && ip.x < size.x && ip.y < size.y)
             .then_some((num::floor_to_usize(ip.x, usize::MAX), num::floor_to_usize(ip.y, usize::MAX)))
     });
-    ViewerOutput { hover, response }
+    ViewerOutput { hover, response, picked }
 }
 
 /// Small label over the image.
@@ -645,5 +672,19 @@ fn minimap(ui: &mut egui::Ui, view: &mut ViewState, thumb: &TextureHandle, canva
         let rel = (p - rect.min) / size;
         view.anchor = None;
         view.center = ImagePos { x: rel.x.clamp(0.0, 1.0) * view.image.x, y: rel.y.clamp(0.0, 1.0) * view.image.y };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImagePos;
+
+    #[test]
+    fn a_position_names_a_pixel_of_the_image() {
+        assert_eq!(ImagePos { x: 10.7, y: 3.2 }.pixel(48, 32), (10, 3));
+        // outside: the nearest pixel at the edge
+        assert_eq!(ImagePos { x: 48.0, y: -5.0 }.pixel(48, 32), (47, 0));
+        assert_eq!(ImagePos { x: f32::NAN, y: 1e9 }.pixel(48, 32), (0, 31));
+        assert_eq!(ImagePos { x: 3.0, y: 3.0 }.pixel(0, 0), (0, 0));
     }
 }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use denoise_core::{num, product, JobControl, Params, PixelRect};
+use denoise_core::{product, JobControl, Params, PixelRect};
 use denoise_engine::{Device, TileProfile};
 use denoise_io::{ExportOptions, FileFormat};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
@@ -22,7 +22,7 @@ use crate::logging;
 use crate::settings::{Destination, Settings, TileHint, STORAGE_KEY};
 use crate::text::{self, tr};
 use crate::theme::{self, Tokens};
-use crate::viewer::{ResultView, ViewState};
+use crate::viewer::{ImagePos, ResultView, ViewState};
 use crate::worker::{Command, ExportJob, ItemStatus, ModelConfig, Msg, UpscaleModels, Worker};
 
 const fn shortcut(command: bool, shift: bool, key: Key) -> KeyboardShortcut {
@@ -265,6 +265,11 @@ pub struct ApsophosApp {
     pub panes: crate::ui::PaneTargets,
     /// The networks and their files, read when the About window opens.
     pub model_list: Option<Vec<crate::model_list::ListedModel>>,
+    /// A click on the photo will choose the point of the enlargement preview.
+    pub picking_preview_point: bool,
+    /// Where the last enlargement preview was asked for; `None`: the centre
+    /// of the view.
+    pub preview_point: Option<ImagePos>,
 }
 
 impl ApsophosApp {
@@ -308,6 +313,8 @@ impl ApsophosApp {
             title: String::new(),
             panes: crate::ui::PaneTargets::default(),
             model_list: None,
+            picking_preview_point: false,
+            preview_point: None,
         };
         app.offer_upscalers();
         match files.as_slice() {
@@ -410,6 +417,7 @@ impl ApsophosApp {
         self.doc = None;
         self.pending_export = None;
         self.hover = None;
+        self.picking_preview_point = false;
     }
 
     // --------------------------------------------------------- processing
@@ -530,15 +538,16 @@ impl ApsophosApp {
         }
     }
 
-    /// Enlarges the export's tile at the centre of the view, for the
-    /// before/after preview (the photo must be denoised: the preview shows
-    /// it as it will be exported).
-    pub fn preview_upscale(&mut self) {
+    /// Enlarges the export's tile at `point`, or at the centre of the view
+    /// when `None`, for the before/after preview (the photo must be
+    /// denoised: the preview shows it as it will be exported).
+    pub fn preview_upscale(&mut self, point: Option<ImagePos>) {
+        self.picking_preview_point = false;
+        self.preview_point = point;
         let Some(upscale) = self.settings.export.upscale else { return };
         let models = self.upscale_models();
         let Some(doc) = self.doc.as_ref().filter(|d| d.is_complete()) else { return };
-        let c = self.view.center();
-        let at = (num::floor_to_usize(c.x, doc.width()), num::floor_to_usize(c.y, doc.height()));
+        let at = point.unwrap_or_else(|| self.view.center()).pixel(doc.width(), doc.height());
         let job = ExportJob {
             path: doc.path.clone(),
             original: Arc::clone(&doc.original),
@@ -551,6 +560,12 @@ impl ApsophosApp {
         self.preview = UpscalePreview::Computing;
         self.windows.upscale_preview = true;
         self.worker.send(Command::PreviewUpscale { doc_id: doc.id, job, at, upscale, models });
+    }
+
+    /// The next click on the photo chooses where the enlargement preview is
+    /// taken (Esc cancels).
+    pub fn pick_preview_point(&mut self) {
+        self.picking_preview_point = self.doc.is_some();
     }
 
     /// The upscaling models and the device, for the worker.
@@ -1124,7 +1139,12 @@ impl ApsophosApp {
             self.view.zoom_by(1.0 / ZOOM_STEP, center);
         }
         if escape {
-            self.stop_all();
+            // Esc leaves the choice of a point first, then stops the work
+            if self.picking_preview_point {
+                self.picking_preview_point = false;
+            } else {
+                self.stop_all();
+            }
         }
         if noise && self.doc.is_some() {
             self.toggle_removed_noise();
