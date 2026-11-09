@@ -9,12 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  # `cargo xtask check` is the same command as scripts\check.bat on the
+  # developer's computer: format, build and tests in release and in debug,
+  # Clippy with warnings as errors and cargo-deny (licences, advisories,
+  # sources; deny.toml). No check is written here, so the two cannot differ.
   check:
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,16 +30,23 @@ jobs:
       # the toolchain is pinned in rust-toolchain.toml
       - run: rustup show
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-      - run: cargo fmt --all --check
-      # DirectML and TensorRT for RTX are Windows builds here: Linux builds without them
-      - run: cargo clippy --workspace --all-targets ${{ runner.os == 'Linux' && '--no-default-features' || '' }} -- -D warnings
-      - run: cargo test --workspace ${{ runner.os == 'Linux' && '--no-default-features' || '' }}
-
-  # licences, security advisories and sources of the dependencies (deny.toml)
-  deny:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # pinned version, built from its own lock file; kept by the cache
+      - name: cargo-deny
+        shell: bash
+        run: |
+          if [ "$(cargo deny --version 2>/dev/null)" != "cargo-deny 0.20.2" ]; then
+            cargo install --locked cargo-deny --version 0.20.2
+          fi
+      # DirectML and TensorRT for RTX are Windows builds: on Linux xtask
+      # builds without them (--no-default-features)
+      - name: Checks
+        run: cargo xtask check
+      - name: Summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+          name: check-${{ matrix.os }}
+          path: |
+            target/check-summary.txt
+            target/check.log
+          if-no-files-found: ignore

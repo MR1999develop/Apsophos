@@ -6,3 +6,8 @@
 # Control Flow Guard and compatible with CET shadow stacks.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "control-flow-guard", "-C", "link-arg=/CETCOMPAT"]
+
+# `cargo xtask check`: the one command of the checks, the same in
+# scripts\check.bat and in the CI (xtask/src/main.rs).
+[alias]
+xtask = "run --locked --quiet --package xtask --"

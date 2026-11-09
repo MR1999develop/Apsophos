@@ -6,7 +6,9 @@ $RtxDlls = @('tensorrt_rtx_1_4.dll', 'tensorrt_onnxparser_rtx_1_4.dll')
 # DLLs that ONNX Runtime's build copies next to the program; without them the
 # GPU cannot work (Windows' own old DirectML answers 887A0004).
 $OrtDlls = @('DirectML.dll', 'onnxruntime_providers_shared.dll', 'onnxruntime_providers_nv_tensorrt_rtx.dll')
-$ReleaseDir = 'target\release'
+# Cargo's target directory: CARGO_TARGET_DIR when set, as for cargo itself.
+$TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
+$ReleaseDir = Join-Path $TargetDir 'release'
 
 # The dependencies' sources sit under the user's folder and the files their
 # build scripts generate under this folder; both paths end up in the program
@@ -48,20 +50,35 @@ function Find-RtxDir {
     return $null
 }
 
+# Copies the TensorRT for RTX DLLs into each folder of $Dirs (made when
+# missing). check.ps1 puts them next to the program of both build profiles
+# before `cargo xtask check`, which hands every DLL there to the test
+# executables. Returns the line to report.
+function Copy-RtxDlls([string[]]$Dirs) {
+    $rtx = Find-RtxDir
+    if (-not $rtx) {
+        return 'TensorRT for RTX 1.4 not found: the program will use DirectML (extract the NVIDIA zip to C:\TensorRT-RTX-1.4...)'
+    }
+    foreach ($dir in $Dirs) {
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        foreach ($dll in $RtxDlls) { Copy-Item (Join-Path $rtx $dll) $dir -Force }
+    }
+    return "TensorRT for RTX 1.4 from $rtx"
+}
+
+# ONNX Runtime's DLLs missing next to the program of the release build.
+function Find-MissingOrtDlls {
+    return @($OrtDlls | Where-Object { -not (Test-Path (Join-Path $ReleaseDir $_)) })
+}
+
 # Puts the TensorRT for RTX DLLs next to the program and gives the test
 # executables (in deps\) the same DLLs as the program. Returns the lines to
 # report: what was copied and what is missing.
 function Sync-Dlls {
     $report = [System.Collections.Generic.List[string]]::new()
     if (-not (Test-Path $ReleaseDir)) { $report.Add("no $ReleaseDir yet: build first"); return $report }
-    $rtx = Find-RtxDir
-    if ($rtx) {
-        foreach ($dll in $RtxDlls) { Copy-Item (Join-Path $rtx $dll) $ReleaseDir -Force }
-        $report.Add("TensorRT for RTX 1.4 from $rtx")
-    } else {
-        $report.Add('TensorRT for RTX 1.4 not found: the program will use DirectML (extract the NVIDIA zip to C:\TensorRT-RTX-1.4...)')
-    }
-    $missing = @($OrtDlls | Where-Object { -not (Test-Path (Join-Path $ReleaseDir $_)) })
+    $report.Add((Copy-RtxDlls @($ReleaseDir)))
+    $missing = Find-MissingOrtDlls
     if ($missing.Count -gt 0) {
         $report.Add("MISSING next to the program: $($missing -join ', ') - run scripts\prepare.bat -RepairDlls")
     }

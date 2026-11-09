@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/io", "crates/engine", "crates/platform", "crates/app"]
+# xtask: the checks (`cargo xtask check`), run by scripts\check.bat and the CI
+members = ["crates/core", "crates/io", "crates/engine", "crates/platform", "crates/app", "xtask"]
 default-members = ["crates/app"]
 
 [workspace.package]
