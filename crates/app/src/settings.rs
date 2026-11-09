@@ -25,10 +25,14 @@ pub enum Destination {
     Folder(PathBuf),
 }
 
-/// Export settings (also used by the queue).
+/// Export settings (also used by the queue): what is done to the photo,
+/// noise reduction and enlargement, each on its own, and where it goes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExportSettings {
+    /// The noise is reduced before anything else; off, the photo is
+    /// enlarged (or written) as it was opened.
+    pub reduce_noise: bool,
     pub options: ExportOptions,
     /// Appended to the name: `photo` → `photo_dn`.
     pub suffix: String,
@@ -41,6 +45,7 @@ pub struct ExportSettings {
 impl Default for ExportSettings {
     fn default() -> Self {
         Self {
+            reduce_noise: true,
             options: ExportOptions::default(),
             suffix: "_dn".into(),
             destination: Destination::SameAsSource,
@@ -50,15 +55,22 @@ impl Default for ExportSettings {
 }
 
 impl ExportSettings {
-    /// The suffix with what the enlargement adds: `_dn_2x`, `_dn_4x-gen`
-    /// (generated detail is said in the name).
+    /// The suffix of what is done: `_dn`, `_dn_2x`, `_dn_4x-gen` (generated
+    /// detail is said in the name), `_2x` without noise reduction.
     pub fn full_suffix(&self) -> String {
-        let Some(u) = self.upscale else { return self.suffix.clone() };
+        let denoised = if self.reduce_noise { self.suffix.as_str() } else { "" };
+        let Some(u) = self.upscale else { return denoised.to_owned() };
         let detail = match u.detail {
             Detail::Faithful => "",
             Detail::Generated => "-gen",
         };
-        format!("{}_{}x{detail}", self.suffix, u.factor.value())
+        format!("{denoised}_{}x{detail}", u.factor.value())
+    }
+
+    /// Something is done to the photo: an export with neither step would
+    /// only copy it.
+    pub fn changes_the_photo(&self) -> bool {
+        self.reduce_noise || self.upscale.is_some()
     }
 
     /// Destination folder for `source`.
@@ -242,6 +254,24 @@ mod tests {
         assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Auto), Some(speed(4.0)));
         assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Cpu), Some(speed(80.0)));
         assert_eq!(upscale_speed(&s.upscale_timings, x4, Device::Cpu), None);
+    }
+
+    #[test]
+    fn the_suffix_says_what_is_done() {
+        use denoise_core::upscale::Factor;
+        let x2 = Upscale { factor: Factor::X2, detail: Detail::Faithful };
+        let x4_gen = Upscale { factor: Factor::X4, detail: Detail::Generated };
+        let mut e = ExportSettings::default();
+        assert_eq!((e.full_suffix(), e.changes_the_photo()), ("_dn".to_owned(), true));
+        e.upscale = Some(x4_gen);
+        assert_eq!(e.full_suffix(), "_dn_4x-gen");
+        // without noise reduction only the enlargement is named
+        e.reduce_noise = false;
+        assert_eq!(e.full_suffix(), "_4x-gen");
+        e.upscale = Some(x2);
+        assert_eq!(e.full_suffix(), "_2x");
+        e.upscale = None;
+        assert!(!e.changes_the_photo());
     }
 
     #[test]

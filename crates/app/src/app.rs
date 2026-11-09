@@ -474,6 +474,10 @@ impl ApsophosApp {
         if self.is_running() {
             return;
         }
+        if !self.settings.export.reduce_noise {
+            self.hint = Some(tr().toolbar.why.noise_off.into());
+            return;
+        }
         if let Some(why) = format::denoise_blocker(self.queue_running(), self.doc.is_some(), &shortcut_text(&SC_OPEN)) {
             self.hint = Some(why);
             return;
@@ -566,12 +570,12 @@ impl ApsophosApp {
         self.preview_point = point;
         let Some(upscale) = self.settings.export.upscale else { return };
         let models = self.upscale_models();
-        let Some(doc) = self.doc.as_ref().filter(|d| d.is_complete()) else { return };
+        let Some(doc) = self.ready_doc() else { return };
         let at = point.unwrap_or_else(|| self.view.center()).pixel(doc.width(), doc.height());
-        let job = self.look_job(doc);
+        let (doc_id, job) = (doc.id, self.look_job(doc));
         self.preview = UpscalePreview::Computing;
         self.windows.upscale_preview = true;
-        self.worker.send(Command::PreviewUpscale { doc_id: doc.id, job, at, upscale, models });
+        self.worker.send(Command::PreviewUpscale { doc_id, job, at, upscale, models });
     }
 
     /// The open photo with the current sliders and export options, for an
@@ -583,20 +587,47 @@ impl ApsophosApp {
             raw: Arc::clone(&doc.raw),
             alpha: None,
             info: Arc::clone(&doc.info),
-            params: self.settings.params,
+            params: self.applied_params(),
             options: self.settings.export.options,
         }
     }
 
+    /// What the photo is processed with: the sliders, or no correction when
+    /// the noise reduction is off (the result is then the original).
+    pub fn applied_params(&self) -> Params {
+        if self.settings.export.reduce_noise {
+            self.settings.params
+        } else {
+            Params::NONE
+        }
+    }
+
+    /// The open photo if it can be enlarged or exported now: denoised, or
+    /// taken as it is when the noise reduction is off.
+    pub fn ready_doc(&self) -> Option<&Document> {
+        let reduce = self.settings.export.reduce_noise;
+        self.doc.as_ref().filter(|d| !reduce || d.is_complete())
+    }
+
+    /// Switches the noise reduction on or off; off, the one running stops:
+    /// the enlargement then starts from the photo as it is.
+    pub fn set_reduce_noise(&mut self, on: bool) {
+        self.settings.export.reduce_noise = on;
+        if !on {
+            self.cancel_denoise();
+            self.denoise_waiting = false;
+        }
+    }
+
     /// What the viewer's enlargement depends on, if it should be shown: a
-    /// factor chosen whose model is on disk, and a denoised photo.
+    /// factor chosen whose model is on disk, and a photo ready for it.
     fn enlarge_key(&mut self) -> Option<enlarged_view::Key> {
         let upscale = self.settings.export.upscale?;
         if denoise_engine::upscaler_files(&self.upscaler_files_now(), upscale).is_empty() {
             return None;
         }
-        let doc = self.doc.as_ref().filter(|d| d.is_complete())?;
-        Some(enlarged_view::Key { doc_id: doc.id, upscale, params: self.settings.params })
+        let doc = self.ready_doc()?;
+        Some(enlarged_view::Key { doc_id: doc.id, upscale, params: self.applied_params() })
     }
 
     /// Asks the worker for the enlargement of the area in view once the view
@@ -672,6 +703,12 @@ impl ApsophosApp {
         if self.exporting {
             return;
         }
+        if !self.settings.export.changes_the_photo() {
+            self.hint = Some(tr().toolbar.why.nothing_to_do.into());
+            return;
+        }
+        // without noise reduction the photo is exported as it is
+        let complete = complete || !self.settings.export.reduce_noise;
         if !complete {
             self.pending_export = Some(match target {
                 Some((p, o)) => PendingExport::To(p, o),
@@ -709,7 +746,7 @@ impl ApsophosApp {
             raw: Arc::clone(&doc.raw),
             alpha: doc.alpha.clone(),
             info: Arc::clone(&doc.info),
-            params: self.settings.params,
+            params: self.applied_params(),
             options,
         };
         self.exporting = true;
@@ -816,7 +853,17 @@ impl ApsophosApp {
         if items.is_empty() {
             return;
         }
-        let Some(model) = self.model_config() else { return };
+        if !self.settings.export.changes_the_photo() {
+            self.hint = Some(tr().toolbar.why.nothing_to_do.into());
+            return;
+        }
+        // the denoiser is needed only when the noise is reduced
+        let model = if self.settings.export.reduce_noise {
+            let Some(model) = self.model_config() else { return };
+            Some(model)
+        } else {
+            None
+        };
         for (n, _) in &items {
             self.queue.items[*n].status = ItemStatus::Queued;
         }

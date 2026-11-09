@@ -90,6 +90,16 @@ photo, the sliders or the factor change. Rejected: enlarging the whole
 photo for the viewer (option B's memory, and minutes of work for what is
 mostly not looked at).
 
+Added on November 9 (owner's request: the two steps must be independent):
+the noise reduction has its own switch in the right panel
+(`ExportSettings::reduce_noise`, on by default and for older settings).
+Off, the photo is taken as it was opened: the enlargement in the view, the
+preview, the export and the queue start from the original without waiting
+for (or loading) the denoiser, the sliders are disabled and the applied
+parameters are `Params::NONE`, so the one blending path still serves both
+cases. The file name then carries only the enlargement (`_2x`); with
+neither step there is nothing to export, and Export and the queue say so.
+
 ## Decision 3 — memory: the output is streamed
 
 The output is produced in bands (one row of tiles at a time), converted to

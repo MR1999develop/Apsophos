@@ -67,7 +67,7 @@ impl ApsophosApp {
         // the models on disk decide what can be chosen (read again at each
         // opening and after a download)
         let files = if open { self.upscaler_files_now() } else { Vec::new() };
-        let denoised = self.doc.as_ref().is_some_and(crate::document::Document::is_complete);
+        let denoised = self.ready_doc().is_some();
         let mut want_preview = false;
         let running = self.download.as_ref().map(|d| (d.done, d.total));
         // the estimate needs the settings while the export part of them is borrowed
@@ -212,7 +212,7 @@ impl ApsophosApp {
         let t = self.tokens;
         let mut open = self.windows.upscale_preview;
         let transform = self.doc.as_ref().map(|d| d.display.shared_transform());
-        let denoised = self.doc.as_ref().is_some_and(crate::document::Document::is_complete);
+        let denoised = self.ready_doc().is_some();
         let (picking, at_point) = (self.picking_preview_point, self.preview_point.is_some());
         let mut pick = false;
         widgets::dialog(ctx, te.preview_title).open(&mut open).resizable(true).show(ctx, |ui| {

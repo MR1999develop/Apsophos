@@ -1,12 +1,24 @@
 # Apsophos — status of the work
 
 Updated on November 5, 2026 (language and workflow rows on November 7,
-release rows on November 8, four blocks on November 9). It is where work
+release rows on November 8, the blocks of November 9). It is where work
 resumes: last checked commit, work in progress, open points, decisions.
 Small postponed things are in `TIDY.md`.
 
 ## Last checked commit
 
+- Branch `independent-steps-2026-11-09` (November 9, after `0aa13a9`):
+  noise reduction and enlargement are independent. A *Reduce the noise*
+  switch in the right panel (`ExportSettings::reduce_noise`, on by
+  default); off, the view, the preview, Export and the queue enlarge the
+  photo as it was opened, without denoising it first, the sliders are
+  disabled and the file name carries only `_2x`/`_4x`. With neither step,
+  Export and the queue say there is nothing to do. Checked with the real
+  networks by `enlarged_view_without_noise_reduction` (ignored test,
+  screenshot `target/screenshots/enlarged-only.png`). Before it, on the
+  same day: `b02082b` (the enlargement chosen in the right panel) and
+  `0aa13a9` (the viewer shows the enlargement of the area in view,
+  decision 2 of `docs/decisions/0001-ai-upscaling.md`).
 - `main` @ `101b71a` (November 9): four blocks, each made by a separate
   agent in its own worktree, then rebased on `main` one at a time, checked
   with `scripts\check.bat` (all green: tests in release and in debug,

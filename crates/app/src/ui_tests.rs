@@ -156,6 +156,35 @@ fn right_panel_chooses_the_enlargement() {
 }
 
 #[test]
+fn noise_reduction_switches_off_on_its_own() {
+    let mut h = harness();
+    let dir = tempfile::tempdir().unwrap();
+    open_dropped(&mut h, sample_png(dir.path(), "plain.png"));
+    let tx = &tr().params;
+    assert!(!h.get_by_label(tx.grain).accesskit_node().is_disabled());
+    h.get_by_label(tx.reduce_noise).click();
+    h.run_steps(3);
+    let app = h.state();
+    assert!(!app.settings.export.reduce_noise);
+    // the photo is ready as it is, with nothing to wait for
+    assert!(app.ready_doc().is_some(), "the photo waits for a noise reduction switched off");
+    assert_eq!(app.applied_params(), denoise_core::Params::NONE);
+    assert!(h.get_by_label(tx.grain).accesskit_node().is_disabled());
+    // the big button exports instead of denoising
+    assert!(h.query_by_role_and_label(Role::Button, tx.denoise).is_none());
+    // neither step chosen: nothing is written
+    h.state_mut().export();
+    h.run_steps(3);
+    assert_eq!(h.state().hint.as_deref(), Some(tr().toolbar.why.nothing_to_do));
+    assert!(!h.state().exporting);
+    // and the noise reduction is not started behind the user's back
+    h.state_mut().start_denoise();
+    h.run_steps(3);
+    assert!(!h.state().is_running());
+    assert_eq!(h.state().hint.as_deref(), Some(tr().toolbar.why.noise_off));
+}
+
+#[test]
 fn menu_closes_after_a_command() {
     let mut h = harness();
     h.get_by_role_and_label(Role::Button, tr().menu.view).click();
@@ -429,6 +458,18 @@ fn screenshot() {
 #[test]
 #[ignore = "needs a GPU and the models; run by hand to look at the enlargement"]
 fn enlarged_view_screenshot() {
+    enlarge_the_view(true, "enlarged.png");
+}
+
+/// The same with the noise reduction off: the photo is enlarged as it is,
+/// without being denoised first (`target/screenshots/enlarged-only.png`).
+#[test]
+#[ignore = "needs a GPU and the models; run by hand to look at the enlargement"]
+fn enlarged_view_without_noise_reduction() {
+    enlarge_the_view(false, "enlarged-only.png");
+}
+
+fn enlarge_the_view(reduce_noise: bool, screenshot: &str) {
     use crate::enlarged_view::Status;
     use denoise_core::upscale::{Detail, Factor, Upscale};
     let dir = tempfile::tempdir().unwrap();
@@ -461,7 +502,10 @@ fn enlarged_view_screenshot() {
     let mut h = Harness::builder().with_size(SIZE).wgpu().build_eframe(|cc| ApsophosApp::new(cc, Vec::new()));
     open_dropped(&mut h, path);
     h.state_mut().settings.export.upscale = Some(Upscale { factor: Factor::X2, detail: Detail::Faithful });
-    h.state_mut().start_denoise();
+    h.state_mut().set_reduce_noise(reduce_noise);
+    if reduce_noise {
+        h.state_mut().start_denoise();
+    }
     let wait = |h: &mut Harness<'_, ApsophosApp>, what: &str, done: &dyn Fn(&ApsophosApp) -> bool| {
         let start = Instant::now();
         while !done(h.state()) {
@@ -470,7 +514,9 @@ fn enlarged_view_screenshot() {
             std::thread::sleep(Duration::from_millis(20));
         }
     };
-    wait(&mut h, "the noise reduction", &|app| app.doc.as_ref().is_some_and(|d| d.is_complete()));
+    if reduce_noise {
+        wait(&mut h, "the noise reduction", &|app| app.doc.as_ref().is_some_and(|d| d.is_complete()));
+    }
     h.state_mut().view.set_zoom_percent(200.0);
     h.run_steps(20);
     wait(&mut h, "the enlargement to start", &|app| app.enlarged.status() == Status::Working);
@@ -479,8 +525,10 @@ fn enlarged_view_screenshot() {
     assert_eq!(h.state().enlarged.upscale().map(|u| u.factor), Some(Factor::X2));
     let area = h.state().view.visible_pixels();
     assert!(!h.state_mut().enlarged.shown(area).is_empty(), "the view shows enlarged tiles");
+    let denoised = h.state().doc.as_ref().map_or(0, |d| d.done_count());
+    assert_eq!(denoised > 0, reduce_noise, "the noise reduction ran only if switched on");
     let image = h.render().unwrap();
     let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/screenshots");
     std::fs::create_dir_all(&out).unwrap();
-    image.save(out.join("enlarged.png")).unwrap();
+    image.save(out.join(screenshot)).unwrap();
 }

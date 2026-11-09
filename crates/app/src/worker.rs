@@ -125,7 +125,8 @@ pub enum Command {
     },
     /// Processes and exports a series of files (enlarged if `export` says so).
     Batch {
-        model: ModelConfig,
+        /// `None`: the noise is not reduced.
+        model: Option<ModelConfig>,
         upscalers: UpscaleModels,
         items: Vec<(usize, PathBuf)>,
         params: Params,
@@ -670,7 +671,7 @@ fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
                 out.send(Msg::ViewEnlarged { request, result });
             }
             Command::Batch { model, upscalers, items, params, export, control } => {
-                let batch = Batch { config: &model, upscalers: &upscalers, params: &params, export: &export };
+                let batch = Batch { config: model.as_ref(), upscalers: &upscalers, params: &params, export: &export };
                 let cancelled = run_batch(&mut nets, &batch, &items, &control, out);
                 out.send(Msg::BatchFinished { cancelled });
             }
@@ -687,7 +688,8 @@ fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
 /// read first, so that the tile size can be chosen for its size.
 /// What every file of a queue run is processed with.
 struct Batch<'a> {
-    config: &'a ModelConfig,
+    /// The denoiser; `None`: the noise is not reduced.
+    config: Option<&'a ModelConfig>,
     upscalers: &'a UpscaleModels,
     params: &'a Params,
     export: &'a ExportSettings,
@@ -732,8 +734,8 @@ fn run_batch(
     false
 }
 
-/// Processes and exports one file already read (noise reduction, then the
-/// enlargement if the export asks for one); `Err(None)` if cancelled,
+/// Processes and exports one file already read (noise reduction and the
+/// enlargement, each if the export asks for it); `Err(None)` if cancelled,
 /// otherwise the error message for the user. With the enlargement, each
 /// file loads both networks in turn: grouping the files would save those
 /// loads (2–3 % of the time) at the cost of gigabytes of denoised photos
@@ -757,24 +759,31 @@ fn process_file(
         upscaling::preflight(size, u.factor.value(), alpha.is_some(), &picture.info, &export.options, &dir)
             .map_err(Some)?;
     }
-    let Some(model) = nets.denoiser(&batch.config.for_image(size), out) else {
-        return Err(Some(tr().notices.model_not_available.into()));
+    let denoised;
+    let result = match batch.config {
+        Some(config) => {
+            let Some(model) = nets.denoiser(&config.for_image(size), out) else {
+                return Err(Some(tr().notices.model_not_available.into()));
+            };
+            denoised = with_network_space(model, picture.info.icc.as_deref(), |m| {
+                denoise_core::denoise(&picture.rgb, batch.params, m, progress, control)
+            })
+            .map_err(|e| match e {
+                DenoiseError::Cancelled => None,
+                other => Some(errors::denoise(&other)),
+            })?;
+            &denoised
+        }
+        None => &picture.rgb,
     };
-    let result = with_network_space(model, picture.info.icc.as_deref(), |m| {
-        denoise_core::denoise(&picture.rgb, batch.params, m, progress, control)
-    })
-    .map_err(|e| match e {
-        DenoiseError::Cancelled => None,
-        other => Some(errors::denoise(&other)),
-    })?;
     match export.upscale {
-        None => denoise_io::write(&target, &result, alpha, &picture.info, &export.options)
+        None => denoise_io::write(&target, result, alpha, &picture.info, &export.options)
             .map_err(|e| Some(errors::io(&e)))?,
         Some(u) => {
             let model = nets.upscaler(u, batch.upscalers, out).map_err(Some)?;
             let output = upscaling::Output { path: &target, info: &picture.info, opts: &export.options };
             let timed = Timed { upscale: u, device: batch.upscalers.engine.device, out };
-            timed.write_enlarged(&output, &result, alpha, model, progress, control)?;
+            timed.write_enlarged(&output, result, alpha, model, progress, control)?;
         }
     }
     Ok(target)

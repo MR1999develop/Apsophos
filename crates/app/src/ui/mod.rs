@@ -134,6 +134,8 @@ impl ApsophosApp {
     fn facts(&self) -> Facts {
         Facts {
             has_image: self.doc.is_some(),
+            reduce_noise: self.settings.export.reduce_noise,
+            changes_the_photo: self.settings.export.changes_the_photo(),
             image_complete: self.doc.as_ref().is_some_and(|d| d.is_complete()),
             tiles_done: self.doc.as_ref().map_or(0, |d| d.done_count()),
             denoising: self.is_running(),

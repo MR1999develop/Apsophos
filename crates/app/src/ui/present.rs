@@ -9,6 +9,10 @@ use crate::text::tr;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub has_image: bool,
+    /// The noise reduction is switched on.
+    pub reduce_noise: bool,
+    /// The export does something: noise reduction, enlargement or both.
+    pub changes_the_photo: bool,
     /// Every tile of the open image is denoised.
     pub image_complete: bool,
     /// Tiles of the open image already denoised.
@@ -45,6 +49,8 @@ impl Facts {
     pub fn export(&self) -> Availability {
         if !self.has_image {
             Err(tr().toolbar.why.open_image_to_export)
+        } else if !self.changes_the_photo {
+            Err(tr().toolbar.why.nothing_to_do)
         } else if self.exporting {
             Err(tr().toolbar.why.already_exporting)
         } else {
@@ -57,6 +63,8 @@ impl Facts {
         let why = &tr().toolbar.why;
         if !self.has_image {
             Err(why.open_image)
+        } else if !self.reduce_noise {
+            Err(why.noise_off)
         } else if self.denoising {
             Err(why.already_processing)
         } else if self.queue_running {
@@ -82,6 +90,8 @@ impl Facts {
             Err(why.queue_running)
         } else if self.queue_pending == 0 {
             Err(why.no_files_to_process)
+        } else if !self.changes_the_photo {
+            Err(why.nothing_to_do)
         } else if self.denoising {
             Err(why.wait_for_denoising)
         } else {
@@ -125,7 +135,7 @@ impl Facts {
             Primary::Progress
         } else if !self.has_image {
             Primary::Open
-        } else if self.image_complete {
+        } else if self.image_complete || !self.reduce_noise {
             Primary::Export
         } else {
             Primary::Denoise { resume: self.tiles_done > 0 }
@@ -209,7 +219,7 @@ mod tests {
     }
 
     fn image() -> Facts {
-        Facts { has_image: true, gpu_build: true, ..Facts::default() }
+        Facts { has_image: true, reduce_noise: true, changes_the_photo: true, gpu_build: true, ..Facts::default() }
     }
 
     #[test]
@@ -228,6 +238,19 @@ mod tests {
         assert_eq!(Facts { tiles_done: 3, ..f }.primary(), Primary::Denoise { resume: true });
         assert_eq!(Facts { image_complete: true, ..f }.primary(), Primary::Export);
         assert_eq!(Facts { exporting: true, ..f }.export(), Err(tr().toolbar.why.already_exporting));
+    }
+
+    #[test]
+    fn without_noise_reduction() {
+        let why = &tr().toolbar.why;
+        // the photo is exported (enlarged) as it is, without denoising first
+        let f = Facts { reduce_noise: false, queue_pending: 2, ..image() };
+        assert_eq!(f.primary(), Primary::Export);
+        assert_eq!(f.denoise(), Err(why.noise_off));
+        assert_eq!((f.export(), f.process_queue()), (Ok(()), Ok(())));
+        // neither step: nothing to export
+        let idle = Facts { changes_the_photo: false, ..f };
+        assert_eq!((idle.export(), idle.process_queue()), (Err(why.nothing_to_do), Err(why.nothing_to_do)));
     }
 
     #[test]

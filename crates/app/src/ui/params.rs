@@ -32,9 +32,17 @@ impl ApsophosApp {
                     ui.add_space(SPACE_XS);
                     ui.label(weak(tx.intro, &t));
                     ui.add_space(SPACE_M);
-                    self.presets(ui, &t);
-                    ui.add_space(SPACE_M);
-                    self.sliders(ui, &t);
+                    let mut reduce = self.settings.export.reduce_noise;
+                    if widgets::checkbox(ui, &mut reduce, tx.reduce_noise).on_hover_text(tx.reduce_noise_tip).changed()
+                    {
+                        self.set_reduce_noise(reduce);
+                    }
+                    ui.add_space(SPACE_S);
+                    ui.add_enabled_ui(reduce, |ui| {
+                        self.presets(ui, &t);
+                        ui.add_space(SPACE_M);
+                        self.sliders(ui, &t);
+                    });
                     ui.add_space(SPACE_M);
                     self.enlargement(ui, &t);
                     ui.add_space(SPACE_L);
@@ -186,7 +194,9 @@ impl ApsophosApp {
                         self.open_export_settings();
                     }
                 });
-                ui.label(weak(tx.sliders_live, t));
+                if self.settings.export.reduce_noise {
+                    ui.label(weak(tx.sliders_live, t));
+                }
             }
             Primary::Denoise { resume } => {
                 let label = if resume { tx.finish_denoising } else { tx.denoise };
@@ -291,7 +301,7 @@ impl ApsophosApp {
 
     /// Luma histogram: the original filled, the result as a line.
     pub(super) fn histogram(&mut self, ui: &mut egui::Ui, t: &Tokens) {
-        let params = self.settings.params;
+        let params = self.applied_params();
         let Some(doc) = self.doc.as_mut() else { return };
         ui.add_space(SPACE_M);
         let tx = &tr().params;

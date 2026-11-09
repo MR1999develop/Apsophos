@@ -61,6 +61,11 @@ pub struct Params {
     pub chroma: Percent,
 }
 
+impl Params {
+    /// No correction: the result is the original.
+    pub const NONE: Params = Params { luma: Percent::ZERO, chroma: Percent::ZERO };
+}
+
 impl Default for Params {
     fn default() -> Self {
         Preset::RECOMMENDED.params()

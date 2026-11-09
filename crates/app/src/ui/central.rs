@@ -34,9 +34,10 @@ impl ApsophosApp {
                 Status::ZoomIn => Some(tr().viewer.enlarge_zoom_in),
                 Status::Off | Status::Ready | Status::Failed => None,
             };
+            let params = self.applied_params();
             let input = ViewerInput {
                 tokens: &t,
-                params: &self.settings.params,
+                params: &params,
                 result_view: self.result_view,
                 show_original: self.show_original,
                 reduce_motion: self.settings.reduce_motion,

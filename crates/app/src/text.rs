@@ -162,6 +162,10 @@ pub struct Why {
     pub no_gpu_build: &'static str,
     pub queue_not_running: &'static str,
     pub no_files_to_process: &'static str,
+    /// Denoise with the noise reduction switched off.
+    pub noise_off: &'static str,
+    /// Export or the queue with neither noise reduction nor enlargement.
+    pub nothing_to_do: &'static str,
     pub wait_for_denoising: &'static str,
     pub wait_for_queue: &'static str,
     pub wait_for_processing: &'static str,
@@ -188,6 +192,9 @@ pub struct Toolbar {
 pub struct ParamsTexts {
     pub title: &'static str,
     pub intro: &'static str,
+    /// The switch of the noise reduction, independent of the enlargement.
+    pub reduce_noise: &'static str,
+    pub reduce_noise_tip: &'static str,
     pub preset: &'static str,
     pub light: &'static str,
     pub light_tip: &'static str,
@@ -708,6 +715,8 @@ pub static EN: Texts = Texts {
             no_gpu_build: "This build has no GPU support",
             queue_not_running: "The queue is not being processed",
             no_files_to_process: "No files to process",
+            noise_off: "Noise reduction is switched off in the right panel",
+            nothing_to_do: "Switch on the noise reduction or choose an enlargement",
             wait_for_denoising: "Wait for the current denoising to finish",
             wait_for_queue: "Wait for the queue to finish",
             wait_for_processing: "Wait for the current processing to finish",
@@ -719,6 +728,8 @@ pub static EN: Texts = Texts {
     params: ParamsTexts {
         title: "Noise reduction",
         intro: "SCUNet neural network trained on real photos: it estimates the noise by itself.",
+        reduce_noise: "Reduce the noise",
+        reduce_noise_tip: "Off, the photo is enlarged or exported as it is, without waiting for the noise reduction",
         preset: "Preset",
         light: "Light",
         light_tip: "Removes half of the grain: natural look, full detail",
@@ -743,7 +754,8 @@ pub static EN: Texts = Texts {
         enlarge_none: "None",
         enlarge_x2: "2×",
         enlarge_x4: "4×",
-        enlarge_tip: "Enlarges the photo with a neural network when exporting; 2× is more credible than 4× on fine                       textures",
+        enlarge_tip:
+            "Enlarges the photo with a neural network when exporting; 2× is more credible than 4× on fine textures",
         enlarge_when: "Shown on the “after” side of the photo, for the area in view; applied when exporting.",
         enlarge_missing: "The upscaling models are not installed: download them below",
         enlarge_options: "Options and preview…",
@@ -1197,6 +1209,8 @@ pub static IT: Texts = Texts {
             no_gpu_build: "Questa versione non supporta la GPU",
             queue_not_running: "La coda non è in elaborazione",
             no_files_to_process: "Nessun file da elaborare",
+            noise_off: "La riduzione del rumore è spenta nel pannello di destra",
+            nothing_to_do: "Accendi la riduzione del rumore o scegli un ingrandimento",
             wait_for_denoising: "Aspetta che finisca la riduzione del rumore in corso",
             wait_for_queue: "Aspetta che finisca la coda",
             wait_for_processing: "Aspetta che finisca l'elaborazione in corso",
@@ -1208,6 +1222,9 @@ pub static IT: Texts = Texts {
     params: ParamsTexts {
         title: "Riduzione del rumore",
         intro: "Rete neurale SCUNet addestrata su foto vere: stima il rumore da sola.",
+        reduce_noise: "Riduci il rumore",
+        reduce_noise_tip: "Spento, la foto si ingrandisce o si esporta così com'è, senza aspettare la riduzione del \
+                           rumore",
         preset: "Preimpostazione",
         light: "Leggera",
         light_tip: "Toglie metà della grana: aspetto naturale, tutto il dettaglio",
@@ -1233,7 +1250,7 @@ pub static IT: Texts = Texts {
         enlarge_none: "Nessuno",
         enlarge_x2: "2×",
         enlarge_x4: "4×",
-        enlarge_tip: "Ingrandisce la foto con una rete neurale durante l'esportazione; il 2× è più credibile del 4×                       sulle tessiture fini",
+        enlarge_tip: "Ingrandisce la foto con una rete neurale durante l'esportazione; il 2× è più credibile del 4× sulle tessiture fini",
         enlarge_when: "Si vede nel lato «Dopo» della foto, per la zona inquadrata; si applica all'esportazione.",
         enlarge_missing: "I modelli di ingrandimento non sono installati: scaricali qui sotto",
         enlarge_options: "Opzioni e anteprima…",
