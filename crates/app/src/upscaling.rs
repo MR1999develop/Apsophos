@@ -13,6 +13,7 @@ use denoise_io::{Band, BandSource, ExportOptions, FileFormat, IoError, SourceInf
 use crate::errors;
 use crate::format;
 use crate::network_space::with_network_space;
+use crate::resources;
 use crate::text::tr;
 
 /// Why an enlarged export ended without a file.
@@ -210,34 +211,15 @@ pub fn preflight(
     };
     let samples = (w as u64).saturating_mul(h as u64).saturating_mul(channels).saturating_mul(depth.bytes());
     let gathered = if file == FileFormat::Png { 0 } else { samples };
-    let available = available_memory();
-    if available > 0 && gathered > available {
+    if let Some(available) = resources::available_memory().filter(|&available| gathered > available) {
         return Err((t.not_enough_memory)(&format::bytes(gathered), &format::bytes(available)));
     }
     // compressed photos rarely take less than this
     let least = if file == FileFormat::Jpeg { samples / 15 } else { samples / 3 };
-    if let Some(free) = free_space(dir).filter(|&free| least > free) {
+    if let Some(free) = resources::free_space(dir).filter(|&free| least > free) {
         return Err((t.not_enough_disk)(&format::bytes(least), &format::bytes(free)));
     }
     Ok(())
-}
-
-fn available_memory() -> u64 {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_memory();
-    sys.available_memory()
-}
-
-/// Free space on the volume holding `dir`, if it can be told.
-fn free_space(dir: &Path) -> Option<u64> {
-    let dir = std::path::absolute(dir).ok()?;
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    disks
-        .list()
-        .iter()
-        .filter(|d| dir.starts_with(d.mount_point()))
-        .max_by_key(|d| d.mount_point().as_os_str().len())
-        .map(sysinfo::Disk::available_space)
 }
 
 #[cfg(test)]

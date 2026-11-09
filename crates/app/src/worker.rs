@@ -27,6 +27,7 @@ use eframe::egui;
 use crate::download;
 use crate::errors;
 use crate::network_space::with_network_space;
+use crate::resources;
 use crate::settings::ExportSettings;
 use crate::text::tr;
 use crate::upscaling::{self, ExportError};
@@ -679,17 +680,15 @@ const BYTES_PER_PIXEL: u64 = 48;
 
 /// The largest image that fits in `available` bytes of memory, never more
 /// than [`ReadLimits::MAX_PIXELS`]; no limit beyond that one if the amount is
-/// unknown (0).
-fn limits_for_memory(available: u64) -> ReadLimits {
-    let fit = if available == 0 { ReadLimits::MAX_PIXELS } else { available / BYTES_PER_PIXEL };
+/// unknown.
+fn limits_for_memory(available: Option<u64>) -> ReadLimits {
+    let fit = available.map_or(ReadLimits::MAX_PIXELS, |bytes| bytes / BYTES_PER_PIXEL);
     ReadLimits { max_pixels: fit.min(ReadLimits::MAX_PIXELS) }
 }
 
 /// Read limits for the memory available right now.
 fn read_limits() -> ReadLimits {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_memory();
-    limits_for_memory(sys.available_memory())
+    limits_for_memory(resources::available_memory())
 }
 
 #[cfg(test)]
@@ -699,8 +698,8 @@ mod tests {
     #[test]
     fn read_limits_follow_the_memory() {
         // 16 GB free: about 330 megapixels
-        assert_eq!(limits_for_memory(16_000_000_000).max_pixels, 16_000_000_000 / 48);
-        assert_eq!(limits_for_memory(0).max_pixels, ReadLimits::MAX_PIXELS);
-        assert_eq!(limits_for_memory(u64::MAX).max_pixels, ReadLimits::MAX_PIXELS);
+        assert_eq!(limits_for_memory(Some(16_000_000_000)).max_pixels, 16_000_000_000 / 48);
+        assert_eq!(limits_for_memory(None).max_pixels, ReadLimits::MAX_PIXELS);
+        assert_eq!(limits_for_memory(Some(u64::MAX)).max_pixels, ReadLimits::MAX_PIXELS);
     }
 }

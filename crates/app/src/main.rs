@@ -13,6 +13,7 @@ mod inspect;
 mod logging;
 mod network_space;
 mod platform;
+mod resources;
 mod selftest;
 mod settings;
 mod symbol;
