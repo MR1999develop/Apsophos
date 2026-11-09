@@ -76,8 +76,16 @@ Trust boundaries, from the least trusted:
   otherwise it is deleted and refused, so a forged file never reaches ONNX
   Runtime; no more bytes than expected are read; time limits on connection,
   answer and transfer; Cancel at any time; the file is written beside its
-  name and renamed durably. The request carries the program's name and
-  version, nothing about the user. No other network access.
+  name and renamed durably. An interrupted download resumes from its
+  partial file (`.<name>.part`, locked while in use, so two windows never
+  write it together) with an HTTP `Range` request; the SHA-256 covers the
+  whole file, the part already on disk included, so a partial file altered
+  on disk is refused like a forged download; a partial file larger than the
+  model, a server that does not answer with exactly the rest of the file,
+  or a wrong hash make it start again from the first byte (a wrong hash
+  once, then the file is refused and deleted). The request carries the
+  program's name and version and, when resuming, the byte it resumes from;
+  nothing about the user. No other network access.
 - **Weights for the models** are converted by the tools in `tools/`, which
   read only tensors from a checkpoint (any other pickled object is
   refused). The upscaler's converter accepts only the four SwinIR files

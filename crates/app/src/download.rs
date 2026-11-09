@@ -4,9 +4,14 @@
 //! into the program (`models/upscalers.txt`), written next to its final
 //! name and renamed durably. Nothing else is sent than the request for the
 //! file, nothing else is received.
+//!
+//! An interrupted download resumes: what arrived stays in `.<name>.part`,
+//! and the next download asks the server only for the rest (HTTP `Range`).
+//! The hash covers the whole file, the part already on disk included, so a
+//! damaged partial file is caught like a damaged download.
 
-use std::fs::File;
-use std::io::{BufWriter, Read, Write};
+use std::fs::{File, TryLockError};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -21,6 +26,9 @@ const CHUNK: usize = 1 << 20;
 /// The slowest transfer still waited for: below it the download stops
 /// with a time-out instead of hanging.
 const SLOWEST_BYTES_PER_SEC: u64 = 20_000;
+/// Longest `Content-Range` header read: `bytes <start>-<end>/<size>` with
+/// numbers of 20 digits fits in it.
+const MAX_CONTENT_RANGE: usize = 80;
 
 /// One file of the list.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,7 +132,9 @@ pub fn download_dir() -> Option<PathBuf> {
 ///
 /// # Errors
 /// [`DownloadError::Cancelled`] if `control` is cancelled; otherwise what
-/// went wrong. Files already completed stay; the one in progress is removed.
+/// went wrong. Files already completed stay; of the one in progress, what
+/// arrived stays for the next download if the connection failed, and goes
+/// otherwise (cancelled, larger or different than expected).
 pub fn download(
     entries: &[Entry],
     dir: &Path,
@@ -159,8 +169,18 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-/// One file: read into a temporary file beside its name while hashing it,
-/// then renamed if size and hash are the expected ones.
+/// What the server answered to a request for a file from a byte on.
+enum Reply {
+    /// 206: the file from byte `start` to its end.
+    Rest { start: u64, body: Box<dyn Read> },
+    /// 200: the whole file (a server that ignores `Range` answers so).
+    Whole(Box<dyn Read>),
+    /// The range cannot be had (416, or a 206 that does not say which part
+    /// of the expected file it holds): the file must be asked for again.
+    NoRange,
+}
+
+/// One file over HTTPS, resuming what an earlier download left.
 fn fetch(
     agent: &ureq::Agent,
     url: &str,
@@ -170,73 +190,230 @@ fn fetch(
     control: &JobControl,
 ) -> Result<(), DownloadError> {
     let failed = |e: &dyn std::fmt::Display| DownloadError::Failed(e.to_string());
-    let limit = Duration::from_secs(60 + entry.size / SLOWEST_BYTES_PER_SEC);
-    let response = agent.get(url).config().timeout_recv_body(Some(limit)).build().call().map_err(|e| match e {
-        ureq::Error::StatusCode(404) => DownloadError::Failed(format!("{} is not published yet", entry.name)),
-        other => failed(&other),
-    })?;
-    let reader = response.into_body().into_with_config().limit(entry.size.saturating_add(1)).reader();
-    store(reader, entry, dir, on_bytes, control)
+    let mut request = |from: u64| -> Result<Reply, DownloadError> {
+        let rest = entry.size.saturating_sub(from);
+        let limit = Duration::from_secs(60 + rest / SLOWEST_BYTES_PER_SEC);
+        let mut builder = agent.get(url);
+        if from > 0 {
+            builder = builder.header("Range", format!("bytes={from}-"));
+        }
+        let response = match builder.config().timeout_recv_body(Some(limit)).build().call() {
+            Ok(r) => r,
+            Err(ureq::Error::StatusCode(416)) => return Ok(Reply::NoRange),
+            Err(ureq::Error::StatusCode(404)) => {
+                return Err(DownloadError::Failed(format!("{} is not published yet", entry.name)))
+            }
+            Err(other) => return Err(failed(&other)),
+        };
+        let partial = response.status().as_u16() == 206;
+        let start = response
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| content_range_start(v, entry.size));
+        // one byte more than expected is read, so that a longer file is caught
+        let body = |max: u64| -> Box<dyn Read> {
+            Box::new(response.into_body().into_with_config().limit(max.saturating_add(1)).reader())
+        };
+        Ok(match (partial, start) {
+            (false, _) => Reply::Whole(body(entry.size)),
+            (true, Some(start)) => Reply::Rest { start, body: body(entry.size - start) },
+            (true, None) => Reply::NoRange,
+        })
+    };
+    resume(entry, dir, &mut request, on_bytes, control)
 }
 
-/// Writes what `reader` gives into `dir`, under the entry's name if its size
-/// and SHA-256 are the expected ones; nothing is left otherwise.
-fn store(
-    mut reader: impl Read,
+/// The first byte of a `Content-Range` answer (`bytes 100-199/200`) for a
+/// file of `size` bytes, if the range runs to the end of exactly that file;
+/// `None` for anything else.
+fn content_range_start(header: &str, size: u64) -> Option<u64> {
+    if header.len() > MAX_CONTENT_RANGE {
+        return None;
+    }
+    let (range, total) = header.strip_prefix("bytes ")?.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let number = |s: &str| s.bytes().all(|b| b.is_ascii_digit()).then(|| s.parse::<u64>().ok()).flatten();
+    let (start, end, total) = (number(start)?, number(end)?, number(total)?);
+    (total == size && end.checked_add(1) == Some(size) && start <= end).then_some(start)
+}
+
+/// How a download that did not complete leaves its partial file.
+enum Stopped {
+    /// The connection failed: what arrived is kept for the next download.
+    Keep(DownloadError),
+    /// Cancelled, or the file is not the expected one: nothing is kept.
+    Discard(DownloadError),
+}
+
+/// Downloads `entry` into `dir`, asking `request` for the file from a byte
+/// on and resuming the partial file of an earlier download; renamed to its
+/// name only if its size and SHA-256 are the expected ones.
+fn resume(
     entry: &Entry,
     dir: &Path,
+    request: &mut dyn FnMut(u64) -> Result<Reply, DownloadError>,
     on_bytes: &mut dyn FnMut(u64),
     control: &JobControl,
 ) -> Result<(), DownloadError> {
     let failed = |e: &dyn std::fmt::Display| DownloadError::Failed(e.to_string());
-    let (tmp, file) = temporary(dir, &entry.name).map_err(|e| failed(&e))?;
-    let result = (|| {
-        let mut out = BufWriter::new(file);
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; CHUNK];
-        let mut got = 0u64;
-        loop {
-            if control.is_cancelled() {
-                return Err(DownloadError::Cancelled);
-            }
-            let n = reader.read(&mut buf).map_err(|e| failed(&e))?;
-            if n == 0 {
-                break;
-            }
-            got += n as u64;
-            if got > entry.size {
-                return Err(DownloadError::Failed(format!("{} is larger than expected", entry.name)));
-            }
-            hasher.update(&buf[..n]);
-            out.write_all(&buf[..n]).map_err(|e| failed(&e))?;
-            on_bytes(got);
+    let part = dir.join(format!(".{}.part", entry.name));
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&part)
+        .map_err(|e| failed(&e))?;
+    // a second window downloading the same file would mix the two
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            return Err(DownloadError::Failed(format!("{} is being downloaded by another window", entry.name)))
         }
-        if got != entry.size || hasher.finalize().as_slice() != entry.sha256 {
-            return Err(DownloadError::Failed(format!("{} differs from the expected file", entry.name)));
-        }
-        out.flush().map_err(|e| failed(&e))?;
-        out.get_ref().sync_all().map_err(|e| failed(&e))?;
-        drop(out);
-        denoise_platform::rename_durably(&tmp, &dir.join(&entry.name)).map_err(|e| failed(&e))
-    })();
-    if result.is_err() {
-        // best effort: the error returned is the one that matters
-        std::fs::remove_file(&tmp).ok();
+        Err(TryLockError::Error(e)) => return Err(failed(&e)),
     }
-    result
+    match complete(&mut file, entry, request, on_bytes, control) {
+        Ok(()) => {
+            drop(file);
+            denoise_platform::rename_durably(&part, &dir.join(&entry.name)).map_err(|e| failed(&e))
+        }
+        Err(Stopped::Keep(e)) if file.metadata().is_ok_and(|m| m.len() > 0) => Err(e),
+        Err(Stopped::Keep(e) | Stopped::Discard(e)) => {
+            // emptied while still locked, so that no other window takes it
+            // up between closing and removing; best effort: the error
+            // returned is the one that matters
+            file.set_len(0).ok();
+            drop(file);
+            std::fs::remove_file(&part).ok();
+            Err(e)
+        }
+    }
 }
 
-/// A new file `.<name>.<process>-<n>.part` in `dir`, created exclusively.
-fn temporary(dir: &Path, name: &str) -> std::io::Result<(PathBuf, File)> {
-    for n in 0..100 {
-        let tmp = dir.join(format!(".{name}.{}-{n}.part", std::process::id()));
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
-            Ok(f) => return Ok((tmp, f)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e),
-        }
+/// Brings `file`, the partial download of `entry`, to the whole file with
+/// the expected hash, written to the disk. Starts again from the first byte
+/// when the partial file is longer than the file, when the server does not
+/// send the part asked for, and once when the file has the wrong hash (the
+/// damage may be in the part an earlier download left).
+fn complete(
+    file: &mut File,
+    entry: &Entry,
+    request: &mut dyn FnMut(u64) -> Result<Reply, DownloadError>,
+    on_bytes: &mut dyn FnMut(u64),
+    control: &JobControl,
+) -> Result<(), Stopped> {
+    let local = |e: std::io::Error| Stopped::Discard(DownloadError::Failed(e.to_string()));
+    let mut have = file.metadata().map_err(local)?.len();
+    if have > entry.size {
+        tracing::info!("{}: partial file larger than the model, downloading again", entry.name);
+        have = 0;
     }
-    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "no free name for a temporary file"))
+    file.set_len(have).map_err(local)?;
+    let mut hasher = Sha256::new();
+    if have > 0 {
+        tracing::info!("{}: resuming after {have} bytes", entry.name);
+        hash_prefix(file, have, &mut hasher, control)?;
+        on_bytes(have);
+    }
+    let mut may_restart = true;
+    loop {
+        if have < entry.size {
+            let body = match request(have).map_err(Stopped::Keep)? {
+                Reply::Rest { start, body } if start == have => body,
+                Reply::Whole(body) => {
+                    (have, hasher) = (0, Sha256::new());
+                    body
+                }
+                Reply::Rest { .. } | Reply::NoRange if have > 0 => {
+                    tracing::info!("{}: the server did not resume, downloading again", entry.name);
+                    (have, hasher) = (0, Sha256::new());
+                    file.set_len(0).map_err(local)?;
+                    continue;
+                }
+                Reply::Rest { .. } | Reply::NoRange => {
+                    return Err(Stopped::Discard(DownloadError::Failed(format!(
+                        "the server did not send {}",
+                        entry.name
+                    ))))
+                }
+            };
+            file.set_len(have).map_err(local)?;
+            file.seek(SeekFrom::Start(have)).map_err(local)?;
+            have = append(file, body, entry, have, &mut hasher, on_bytes, control)?;
+        }
+        if have == entry.size && hasher.clone().finalize().as_slice() == entry.sha256 {
+            file.sync_all().map_err(local)?;
+            return Ok(());
+        }
+        if have < entry.size {
+            // the connection ended before the end of the file
+            return Err(Stopped::Keep(DownloadError::Failed(format!(
+                "the download of {} was interrupted",
+                entry.name
+            ))));
+        }
+        if !std::mem::take(&mut may_restart) {
+            return Err(Stopped::Discard(DownloadError::Failed(format!(
+                "{} differs from the expected file",
+                entry.name
+            ))));
+        }
+        tracing::info!("{}: the file differs from the expected one, downloading again", entry.name);
+        (have, hasher) = (0, Sha256::new());
+        file.set_len(0).map_err(local)?;
+    }
+}
+
+/// Hashes the first `len` bytes of `file`, the part an earlier download left.
+fn hash_prefix(file: &mut File, len: u64, hasher: &mut Sha256, control: &JobControl) -> Result<(), Stopped> {
+    let local = |e: std::io::Error| Stopped::Discard(DownloadError::Failed(e.to_string()));
+    file.seek(SeekFrom::Start(0)).map_err(local)?;
+    let mut buf = vec![0u8; CHUNK];
+    let mut left = len;
+    while left > 0 {
+        if control.is_cancelled() {
+            return Err(Stopped::Discard(DownloadError::Cancelled));
+        }
+        let n = usize::try_from(left).map_or(CHUNK, |l| l.min(CHUNK));
+        file.read_exact(&mut buf[..n]).map_err(local)?;
+        hasher.update(&buf[..n]);
+        left -= n as u64;
+    }
+    Ok(())
+}
+
+/// Appends what `body` gives to `file`, which holds `have` bytes, while
+/// hashing it; returns the bytes the file holds at the end of the body.
+fn append(
+    file: &mut File,
+    mut body: Box<dyn Read>,
+    entry: &Entry,
+    mut have: u64,
+    hasher: &mut Sha256,
+    on_bytes: &mut dyn FnMut(u64),
+    control: &JobControl,
+) -> Result<u64, Stopped> {
+    let local = |e: std::io::Error| Stopped::Discard(DownloadError::Failed(e.to_string()));
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        if control.is_cancelled() {
+            return Err(Stopped::Discard(DownloadError::Cancelled));
+        }
+        let n = match body.read(&mut buf) {
+            Ok(0) => return Ok(have),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(Stopped::Keep(DownloadError::Failed(e.to_string()))),
+        };
+        have += n as u64;
+        if have > entry.size {
+            return Err(Stopped::Discard(DownloadError::Failed(format!("{} is larger than expected", entry.name))));
+        }
+        hasher.update(&buf[..n]);
+        file.write_all(&buf[..n]).map_err(local)?;
+        on_bytes(have);
+    }
 }
 
 #[cfg(test)]
@@ -277,33 +454,259 @@ mod tests {
         assert!(none_installed(Pack::Generated, &installed));
     }
 
+    #[test]
+    fn content_ranges() {
+        assert_eq!(content_range_start("bytes 100-199/200", 200), Some(100));
+        assert_eq!(content_range_start("bytes 0-199/200", 200), Some(0));
+        assert_eq!(content_range_start("bytes 199-199/200", 200), Some(199));
+        for bad in [
+            "bytes 100-199/300",  // another file
+            "bytes 100-150/200",  // not to the end
+            "bytes 150-100/200",  // backwards
+            "bytes 100-199/*",    // size unknown
+            "bytes */200",        // the 416 form
+            "bytes -100-199/200", // signs
+            "bytes +100-199/200",
+            "bytes 100 -199/200", // spaces
+            "items 100-199/200",  // another unit
+            "bytes 100-199",      // no size
+            "",
+            "bytes 1-18446744073709551615/18446744073709551615", // end + 1 overflows
+            "bytes 99999999999999999999999-1/2",
+        ] {
+            assert_eq!(content_range_start(bad, 200), None, "{bad}");
+        }
+        assert_eq!(content_range_start("bytes 1-18446744073709551615/18446744073709551615", u64::MAX), None);
+        let long = format!("bytes {}100-199/200", "0".repeat(100));
+        assert_eq!(content_range_start(&long, 200), None);
+    }
+
     fn entry_for(data: &[u8]) -> Entry {
         let sha256 = Sha256::digest(data).into();
         Entry { sha256, size: data.len() as u64, name: "swinir_real_x2_psnr_320_fp16.onnx".into() }
     }
 
+    fn model() -> Vec<u8> {
+        (0..10_000u32).flat_map(|i| (i.wrapping_mul(2_654_435_761)).to_le_bytes()).collect()
+    }
+
+    fn part_of(dir: &Path, entry: &Entry) -> PathBuf {
+        dir.join(format!(".{}.part", entry.name))
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    fn whole(data: &[u8]) -> Reply {
+        Reply::Whole(Box::new(std::io::Cursor::new(data.to_vec())))
+    }
+
+    fn rest(data: &[u8], start: usize) -> Reply {
+        Reply::Rest { start: start as u64, body: Box::new(std::io::Cursor::new(data[start..].to_vec())) }
+    }
+
+    /// A server that answers as `answer` from the byte asked for, and
+    /// records what was asked.
+    struct Server<F: FnMut(u64) -> Reply> {
+        asked: Vec<u64>,
+        answer: F,
+    }
+
+    impl<F: FnMut(u64) -> Reply> Server<F> {
+        fn new(answer: F) -> Self {
+            Self { asked: Vec::new(), answer }
+        }
+
+        fn run(&mut self, entry: &Entry, dir: &Path, control: &JobControl) -> Result<(), DownloadError> {
+            let mut request = |from| {
+                self.asked.push(from);
+                Ok((self.answer)(from))
+            };
+            resume(entry, dir, &mut request, &mut |_| {}, control)
+        }
+    }
+
+    /// Reads `limit` bytes of `data`, then fails as a dropped connection.
+    struct Dropped {
+        data: std::io::Cursor<Vec<u8>>,
+        limit: u64,
+    }
+
+    impl Read for Dropped {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.data.position() >= self.limit {
+                return Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "connection reset"));
+            }
+            let room = usize::try_from(self.limit - self.data.position()).unwrap();
+            let n = room.min(buf.len());
+            self.data.read(&mut buf[..n])
+        }
+    }
+
     #[test]
-    fn only_the_expected_file_is_kept() {
+    fn a_fresh_download_keeps_only_the_expected_file() {
         let dir = tempfile::tempdir().unwrap();
-        let data = b"model bytes".repeat(1000);
+        let data = model();
         let entry = entry_for(&data);
         let ctrl = JobControl::default();
         let mut seen = 0;
-        store(&data[..], &entry, dir.path(), &mut |n| seen = n, &ctrl).unwrap();
+        let mut request = |_| Ok(whole(&data));
+        resume(&entry, dir.path(), &mut request, &mut |n| seen = n, &ctrl).unwrap();
         assert_eq!(std::fs::read(dir.path().join(&entry.name)).unwrap(), data);
         assert_eq!(seen, data.len() as u64);
-        // a different file, a shorter one, a longer one: refused, nothing left
-        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(files_in(dir.path()), [entry.name.as_str()]);
+    }
+
+    #[test]
+    fn a_dropped_connection_resumes_where_it_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = model();
+        let entry = entry_for(&data);
+        let ctrl = JobControl::default();
+        let cut = 12_345;
+        let mut first =
+            Server::new(|_| Reply::Whole(Box::new(Dropped { data: std::io::Cursor::new(data.clone()), limit: cut })));
+        assert!(matches!(first.run(&entry, dir.path(), &ctrl), Err(DownloadError::Failed(_))));
+        // what arrived is kept, and only that
+        assert_eq!(std::fs::read(part_of(dir.path(), &entry)).unwrap(), data[..12_345]);
+        // the next download asks for the rest only, and the hash of the
+        // whole file (the part on disk included) is the expected one
+        let mut second = Server::new(|from| rest(&data, usize::try_from(from).unwrap()));
+        second.run(&entry, dir.path(), &ctrl).unwrap();
+        assert_eq!(second.asked, [cut]);
+        assert_eq!(std::fs::read(dir.path().join(&entry.name)).unwrap(), data);
+        assert_eq!(files_in(dir.path()), [entry.name.as_str()]);
+    }
+
+    #[test]
+    fn a_server_that_ignores_the_range_starts_from_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = model();
+        let entry = entry_for(&data);
+        std::fs::write(part_of(dir.path(), &entry), &data[..5000]).unwrap();
+        // 200 with the whole file: appended to the part, it would be too long
+        let mut server = Server::new(|_| whole(&data));
+        server.run(&entry, dir.path(), &JobControl::default()).unwrap();
+        assert_eq!(server.asked, [5000]);
+        assert_eq!(std::fs::read(dir.path().join(&entry.name)).unwrap(), data);
+        assert_eq!(files_in(dir.path()), [entry.name.as_str()]);
+    }
+
+    #[test]
+    fn a_range_refused_or_misplaced_starts_from_zero() {
+        let data = model();
+        let entry = entry_for(&data);
+        // 416, then a 206 from another byte than the one asked for
+        let wrongs: [fn(&[u8]) -> Reply; 2] = [|_| Reply::NoRange, |d| rest(d, 100)];
+        for wrong in wrongs {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(part_of(dir.path(), &entry), &data[..5000]).unwrap();
+            let mut server = Server::new(|from| if from == 0 { whole(&data) } else { wrong(&data) });
+            server.run(&entry, dir.path(), &JobControl::default()).unwrap();
+            assert_eq!(server.asked, [5000, 0]);
+            assert_eq!(std::fs::read(dir.path().join(&entry.name)).unwrap(), data);
+        }
+        // a server that never sends the file: an error, nothing left
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = Server::new(|_| Reply::NoRange);
+        assert!(matches!(server.run(&entry, dir.path(), &JobControl::default()), Err(DownloadError::Failed(_))));
+        assert!(files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_partial_file_larger_than_the_model_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = model();
+        let entry = entry_for(&data);
+        std::fs::write(part_of(dir.path(), &entry), [data.as_slice(), b"extra"].concat()).unwrap();
+        let mut server = Server::new(|_| whole(&data));
+        server.run(&entry, dir.path(), &JobControl::default()).unwrap();
+        assert_eq!(server.asked, [0]);
+        assert_eq!(std::fs::read(dir.path().join(&entry.name)).unwrap(), data);
+        assert_eq!(files_in(dir.path()), [entry.name.as_str()]);
+    }
+
+    #[test]
+    fn a_complete_partial_file_needs_no_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = model();
+        let entry = entry_for(&data);
+        std::fs::write(part_of(dir.path(), &entry), &data).unwrap();
+        let mut server = Server::new(|_| unreachable!("nothing to ask for"));
+        server.run(&entry, dir.path(), &JobControl::default()).unwrap();
+        assert_eq!(files_in(dir.path()), [entry.name.as_str()]);
+    }
+
+    #[test]
+    fn a_damaged_partial_file_is_downloaded_again_once() {
+        let data = model();
+        let entry = entry_for(&data);
+        let mut damaged = data[..5000].to_vec();
+        damaged[10] ^= 1;
+        // the damage is in the part on disk: once more from zero, then right
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(part_of(dir.path(), &entry), &damaged).unwrap();
+        let mut server = Server::new(|from| if from == 0 { whole(&data) } else { rest(&data, 5000) });
+        server.run(&entry, dir.path(), &JobControl::default()).unwrap();
+        assert_eq!(server.asked, [5000, 0]);
+        assert_eq!(std::fs::read(dir.path().join(&entry.name)).unwrap(), data);
+        // a server that keeps sending another file: refused, nothing left
+        let dir = tempfile::tempdir().unwrap();
         let mut other = data.clone();
         other[5] ^= 1;
-        for bad in [&other[..], &data[..10], &[data.as_slice(), b"x"].concat()[..]] {
-            assert!(matches!(store(bad, &entry, empty.path(), &mut |_| {}, &ctrl), Err(DownloadError::Failed(_))));
-            assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
-        }
+        let mut server = Server::new(|_| whole(&other));
+        assert!(matches!(server.run(&entry, dir.path(), &JobControl::default()), Err(DownloadError::Failed(_))));
+        assert_eq!(server.asked, [0, 0]);
+        assert!(files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn wrong_sizes_and_cancellation_leave_nothing() {
+        let data = model();
+        let entry = entry_for(&data);
+        let shorter = data[..10].to_vec();
+        let longer = [data.as_slice(), b"x"].concat();
+        // shorter: the connection ended early, the part stays for later
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = Server::new(|_| whole(&shorter));
+        assert!(matches!(server.run(&entry, dir.path(), &JobControl::default()), Err(DownloadError::Failed(_))));
+        assert_eq!(files_in(dir.path()), [format!(".{}.part", entry.name)]);
+        // longer: not the expected file, nothing left
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = Server::new(|_| whole(&longer));
+        assert!(matches!(server.run(&entry, dir.path(), &JobControl::default()), Err(DownloadError::Failed(_))));
+        assert!(files_in(dir.path()).is_empty());
         // cancelled: nothing left either
+        let dir = tempfile::tempdir().unwrap();
+        let ctrl = JobControl::default();
         ctrl.cancel();
-        assert!(matches!(store(&data[..], &entry, empty.path(), &mut |_| {}, &ctrl), Err(DownloadError::Cancelled)));
-        assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
+        let mut server = Server::new(|_| whole(&data));
+        assert!(matches!(server.run(&entry, dir.path(), &ctrl), Err(DownloadError::Cancelled)));
+        assert!(files_in(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn two_windows_never_write_the_same_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = model();
+        let entry = entry_for(&data);
+        let other = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(part_of(dir.path(), &entry))
+            .unwrap();
+        other.lock().unwrap();
+        let mut server = Server::new(|_| whole(&data));
+        assert!(matches!(server.run(&entry, dir.path(), &JobControl::default()), Err(DownloadError::Failed(_))));
+        assert!(server.asked.is_empty());
+        drop(other);
+        server.run(&entry, dir.path(), &JobControl::default()).unwrap();
     }
 
     #[test]
