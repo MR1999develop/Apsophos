@@ -676,7 +676,10 @@ fn run_batch(
 
 /// Processes and exports one file already read (noise reduction, then the
 /// enlargement if the export asks for one); `Err(None)` if cancelled,
-/// otherwise the error message for the user.
+/// otherwise the error message for the user. With the enlargement, each
+/// file loads both networks in turn: grouping the files would save those
+/// loads (2–3 % of the time) at the cost of gigabytes of denoised photos
+/// kept waiting (decision 7 of `docs/decisions/0001-ai-upscaling.md`).
 fn process_file(
     nets: &mut Networks,
     batch: &Batch<'_>,

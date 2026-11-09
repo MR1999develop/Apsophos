@@ -170,6 +170,36 @@ pixel, 4.6 GB for 4× of 24 MP).
   other. Without the files the choice is disabled and the download offered
   in its place.
 
+## Decision 7 — the queue with enlargement (9 November)
+
+With the enlargement on, the queue loads SCUNet and then SwinIR for every
+file: one network at a time in the GPU's memory. Measured on the RTX 3050
+laptop (TensorRT for RTX, saved engines): a load takes 4–5 s, so the two
+loads of a file cost 8–10 s, against about 13 s of noise reduction and
+5 minutes (2×) to 10 minutes (4×) of enlargement for 24 MP: 2–3 % of the
+file's time; with DirectML and on the CPU, below 1 %.
+
+Grouping (first all the noise reductions, then all the enlargements) would
+save most of those loads, but the denoised photos must wait somewhere, in
+floating point (12 bytes per pixel, 288 MB for 24 MP: a coarser copy would
+make the queue's files differ from the export of the same photo):
+
+- **A: all of them on disk**, in the local data folder: 29 GB for 100
+  photos of 24 MP, written and read again (seconds per photo on an SSD,
+  more on a hard disk, which eats part of the saving), temporary files to
+  clean up after a crash, and a queue that writes its first file only
+  after denoising all of them.
+- **B: groups held in memory** under a budget (about 2 GB, 6 photos of
+  24 MP): saves 5 loads out of 6, about 7 s per photo, but takes that
+  memory while SwinIR runs, beside the samples a 4× TIFF gathers (up to
+  2.3 GB for 24 MP); a cancel or a crash loses the denoised photos of the
+  group not written yet, and each file's progress becomes two phases.
+
+Decided: **the queue stays file by file.** Both alternatives cost memory or
+disk in the gigabytes to gain 2–3 % of the time, and B adds lost work on
+cancel. To reconsider if the enlargement becomes much faster (then the
+loads weigh more) or if the engines stop being cached between loads.
+
 ## Consequences and how they are checked
 
 - Unit tests with a fake ×2 model (nearest neighbour) for the tile plan, the
