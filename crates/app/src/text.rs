@@ -363,6 +363,12 @@ pub struct Central {
 pub struct Viewer {
     pub before: &'static str,
     pub after: &'static str,
+    /// The "after" side with the enlargement shown: `After · 2×`.
+    pub after_enlarged: fn(&str) -> String,
+    /// Over the photo while the area in view is being enlarged.
+    pub enlarging_view: &'static str,
+    /// Over the photo when the view is too wide to enlarge.
+    pub enlarge_zoom_in: &'static str,
     pub original: &'static str,
     /// `Removed noise ×4`.
     pub removed_noise: fn(f32) -> String,
@@ -548,6 +554,8 @@ pub struct Notices {
     pub export_cancelled: &'static str,
     /// From the reason the GPU was not used.
     pub upscaler_on_cpu: fn(&str) -> String,
+    /// The enlargement of the area in view failed, with why.
+    pub view_enlarge_failed: fn(&str) -> String,
     /// The offer at start, from the size of the download.
     pub upscalers_offer: fn(&str) -> String,
     pub download_models: &'static str,
@@ -736,7 +744,7 @@ pub static EN: Texts = Texts {
         enlarge_x2: "2×",
         enlarge_x4: "4×",
         enlarge_tip: "Enlarges the photo with a neural network when exporting; 2× is more credible than 4× on fine                       textures",
-        enlarge_when: "Applied when exporting, after the noise reduction.",
+        enlarge_when: "Shown on the “after” side of the photo, for the area in view; applied when exporting.",
         enlarge_missing: "The upscaling models are not installed: download them below",
         enlarge_options: "Options and preview…",
         denoise: "Denoise",
@@ -863,6 +871,9 @@ pub static EN: Texts = Texts {
     viewer: Viewer {
         before: "Before",
         after: "After",
+        after_enlarged: |factor| format!("After · {factor}"),
+        enlarging_view: "Enlarging the area in view…",
+        enlarge_zoom_in: "Zoom in to see the enlargement",
         original: "Original",
         removed_noise: |gain| format!("Removed noise ×{gain}"),
         navigator_tip: "Navigator: click or drag to move the view",
@@ -1024,6 +1035,7 @@ pub static EN: Texts = Texts {
         exported: |name| format!("Exported “{name}”."),
         export_cancelled: "Export cancelled: no file written.",
         upscaler_on_cpu: |why| format!("The enlargement runs on the CPU, much more slowly: {why}"),
+        view_enlarge_failed: |why| format!("The area in view could not be enlarged: {why}"),
         upscalers_offer: |size| {
             format!(
                 "To enlarge photos 2× and 4×, Apsophos needs its upscaling models ({size}, downloaded once). \
@@ -1222,7 +1234,7 @@ pub static IT: Texts = Texts {
         enlarge_x2: "2×",
         enlarge_x4: "4×",
         enlarge_tip: "Ingrandisce la foto con una rete neurale durante l'esportazione; il 2× è più credibile del 4×                       sulle tessiture fini",
-        enlarge_when: "Si applica all'esportazione, dopo la riduzione del rumore.",
+        enlarge_when: "Si vede nel lato «Dopo» della foto, per la zona inquadrata; si applica all'esportazione.",
         enlarge_missing: "I modelli di ingrandimento non sono installati: scaricali qui sotto",
         enlarge_options: "Opzioni e anteprima…",
         denoise: "Riduci il rumore",
@@ -1351,6 +1363,9 @@ pub static IT: Texts = Texts {
     viewer: Viewer {
         before: "Prima",
         after: "Dopo",
+        after_enlarged: |factor| format!("Dopo · {factor}"),
+        enlarging_view: "Ingrandimento della zona inquadrata…",
+        enlarge_zoom_in: "Ingrandisci la vista per vedere l'ingrandimento",
         original: "Originale",
         removed_noise: |gain| format!("Rumore tolto ×{gain}"),
         navigator_tip: "Navigatore: fai clic o trascina per spostare la vista",
@@ -1516,6 +1531,7 @@ pub static IT: Texts = Texts {
         exported: |name| format!("Esportato “{name}”."),
         export_cancelled: "Esportazione annullata: nessun file scritto.",
         upscaler_on_cpu: |why| format!("L'ingrandimento usa la CPU, molto più lenta: {why}"),
+        view_enlarge_failed: |why| format!("Impossibile ingrandire la zona inquadrata: {why}"),
         upscalers_offer: |size| {
             format!(
                 "Per ingrandire le foto 2× e 4× servono i modelli di ingrandimento ({size}, da scaricare una volta \

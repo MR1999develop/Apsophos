@@ -77,6 +77,19 @@ history at that size, and every later step working on synthesised pixels.
 
 Proposed: **A**.
 
+Added on November 9 (owner's request): the choice is also in the right
+panel, and with 2× or 4× chosen the viewer shows the enlargement on its
+"after" side, for the area in view only (`crates/app/src/enlarged_view.rs`).
+Once the view has stood still for 0.3 s, the export's tiles over it are
+enlarged by the worker (the same plan and code as the file, so what is
+seen is what is written) and drawn at the photo's place, so the viewer
+keeps the photo's size and the history is untouched. A view wider than
+3 megapixels asks to zoom in instead; the enlarged tiles are kept as
+textures up to 64 million output pixels (256 MB) and dropped when the
+photo, the sliders or the factor change. Rejected: enlarging the whole
+photo for the viewer (option B's memory, and minutes of work for what is
+mostly not looked at).
+
 ## Decision 3 — memory: the output is streamed
 
 The output is produced in bands (one row of tiles at a time), converted to

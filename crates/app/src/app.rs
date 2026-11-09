@@ -8,13 +8,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use denoise_core::{product, JobControl, Params, PixelRect};
+use denoise_core::{product, Image, JobControl, Params, PixelRect};
 use denoise_engine::{Device, TileProfile};
 use denoise_io::{ExportOptions, FileFormat};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 
 use crate::document::Document;
 use crate::download;
+use crate::enlarged_view::{self, EnlargedView, Step};
 use crate::errors;
 use crate::format::{self, file_name};
 use crate::history::History;
@@ -270,6 +271,10 @@ pub struct ApsophosApp {
     /// Where the last enlargement preview was asked for; `None`: the centre
     /// of the view.
     pub preview_point: Option<ImagePos>,
+    /// The enlargement of the area in view, drawn by the viewer.
+    pub enlarged: EnlargedView<egui::TextureHandle>,
+    /// Stops the request of the viewer's enlargement in flight.
+    enlarge_control: Option<Arc<JobControl>>,
 }
 
 impl ApsophosApp {
@@ -315,6 +320,8 @@ impl ApsophosApp {
             model_list: None,
             picking_preview_point: false,
             preview_point: None,
+            enlarged: EnlargedView::default(),
+            enlarge_control: None,
         };
         app.offer_upscalers();
         match files.as_slice() {
@@ -561,7 +568,16 @@ impl ApsophosApp {
         let models = self.upscale_models();
         let Some(doc) = self.doc.as_ref().filter(|d| d.is_complete()) else { return };
         let at = point.unwrap_or_else(|| self.view.center()).pixel(doc.width(), doc.height());
-        let job = ExportJob {
+        let job = self.look_job(doc);
+        self.preview = UpscalePreview::Computing;
+        self.windows.upscale_preview = true;
+        self.worker.send(Command::PreviewUpscale { doc_id: doc.id, job, at, upscale, models });
+    }
+
+    /// The open photo with the current sliders and export options, for an
+    /// enlargement that is looked at (preview and view), not written.
+    fn look_job(&self, doc: &Document) -> ExportJob {
+        ExportJob {
             path: doc.path.clone(),
             original: Arc::clone(&doc.original),
             raw: Arc::clone(&doc.raw),
@@ -569,10 +585,66 @@ impl ApsophosApp {
             info: Arc::clone(&doc.info),
             params: self.settings.params,
             options: self.settings.export.options,
-        };
-        self.preview = UpscalePreview::Computing;
-        self.windows.upscale_preview = true;
-        self.worker.send(Command::PreviewUpscale { doc_id: doc.id, job, at, upscale, models });
+        }
+    }
+
+    /// What the viewer's enlargement depends on, if it should be shown: a
+    /// factor chosen whose model is on disk, and a denoised photo.
+    fn enlarge_key(&mut self) -> Option<enlarged_view::Key> {
+        let upscale = self.settings.export.upscale?;
+        if denoise_engine::upscaler_files(&self.upscaler_files_now(), upscale).is_empty() {
+            return None;
+        }
+        let doc = self.doc.as_ref().filter(|d| d.is_complete())?;
+        Some(enlarged_view::Key { doc_id: doc.id, upscale, params: self.settings.params })
+    }
+
+    /// Asks the worker for the enlargement of the area in view once the view
+    /// stands still, and stops what is no longer wanted.
+    fn drive_enlarged_view(&mut self, ctx: &egui::Context) {
+        let want = self.enlarge_key();
+        // another job has the network thread, or the view shows no result
+        let paused = self.exporting
+            || self.is_running()
+            || self.queue_running()
+            || self.show_original
+            || self.result_view != ResultView::Denoised;
+        let area = self.view.visible_pixels();
+        match self.enlarged.frame(want, paused, area, Instant::now()) {
+            Step::Nothing => {}
+            Step::Wait(after) => ctx.request_repaint_after(after),
+            Step::Cancel => {
+                self.stop_view_enlargement();
+                ctx.request_repaint();
+            }
+            Step::Request { request, area, have } => {
+                self.stop_view_enlargement();
+                let (Some(key), Some(doc)) = (want, self.doc.as_ref()) else { return };
+                let control = Arc::new(JobControl::default());
+                self.enlarge_control = Some(Arc::clone(&control));
+                let (doc_id, job, models) = (doc.id, self.look_job(doc), self.upscale_models());
+                let upscale = key.upscale;
+                self.worker.send(Command::EnlargeView { doc_id, request, job, upscale, models, area, have, control });
+            }
+        }
+    }
+
+    fn stop_view_enlargement(&mut self) {
+        if let Some(control) = self.enlarge_control.take() {
+            control.cancel();
+        }
+    }
+
+    /// An enlarged tile for the viewer, made into a texture in the photo's
+    /// display colours if it is still wanted.
+    fn accept_view_tile(&mut self, ctx: &egui::Context, request: u64, index: usize, rect: PixelRect, pixels: &Image) {
+        if !self.enlarged.wants(request) {
+            return;
+        }
+        let Some(doc) = self.doc.as_ref() else { return };
+        let image = crate::viewer::color_image(pixels, doc.display.transform());
+        let texture = ctx.load_texture(format!("enlarged-{index}"), image, crate::viewer::texture_options());
+        self.enlarged.accept(request, index, rect, texture, pixels.width() * pixels.height());
     }
 
     /// The next click on the photo chooses where the enlargement preview is
@@ -977,6 +1049,13 @@ impl ApsophosApp {
                     };
                 }
             }
+            // made into textures in `logic`, which has the context
+            Msg::ViewTile { .. } => {}
+            Msg::ViewEnlarged { request, result } => {
+                if let Some(why) = self.enlarged.finished(request, result) {
+                    self.notify(NoticeKind::Error, (tr().notices.view_enlarge_failed)(&why), vec![]);
+                }
+            }
             Msg::DownloadProgress { done, total } => {
                 if let Some(run) = &mut self.download {
                     (run.done, run.total) = (done, total);
@@ -1206,11 +1285,17 @@ impl eframe::App for ApsophosApp {
     /// changes the state before the frame is drawn.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for msg in self.worker.drain() {
-            self.on_message(msg);
+            match msg {
+                Msg::ViewTile { request, index, rect, pixels } => {
+                    self.accept_view_tile(ctx, request, index, rect, &pixels);
+                }
+                other => self.on_message(other),
+            }
         }
         self.handle_shortcuts(ctx);
         self.handle_drops(ctx);
         self.update_title(ctx);
+        self.drive_enlarged_view(ctx);
         // while processing, the time estimate changes even without messages
         if self.is_running() || self.queue_running() {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));

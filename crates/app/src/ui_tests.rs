@@ -421,3 +421,66 @@ fn screenshot() {
     std::fs::create_dir_all(&out).unwrap();
     image.save(out.join("window.png")).unwrap();
 }
+
+/// The enlargement of the area in view, with the real networks: opens a
+/// photo, denoises it, chooses 2× and waits for the view to be enlarged;
+/// the window goes to `target/screenshots/enlarged.png`. Not run by
+/// default: it needs a GPU and the models.
+#[test]
+#[ignore = "needs a GPU and the models; run by hand to look at the enlargement"]
+fn enlarged_view_screenshot() {
+    use crate::enlarged_view::Status;
+    use denoise_core::upscale::{Detail, Factor, Upscale};
+    let dir = tempfile::tempdir().unwrap();
+    let (w, h) = (640, 480);
+    // fine stripes and a little noise: detail the enlargement can show
+    let data = (0..w * h)
+        .flat_map(|i| {
+            let (x, y) = ((i % w) as f32, (i / w) as f32);
+            let wave = 0.5 + 0.4 * ((x * 0.35).sin() * (y * 0.07).cos());
+            let noise = ((i * 2_654_435_761) % 1000) as f32 / 1000.0 * 0.08;
+            [wave + noise, 0.45 + noise, 1.0 - wave + noise]
+        })
+        .collect();
+    let img = Image::from_rgb(w, h, data).unwrap();
+    let info = SourceInfo {
+        format: FileFormat::Png,
+        bit_depth: BitDepth::U8,
+        gray: false,
+        icc: None,
+        exif: None,
+        xmp: None,
+        xmp_extended: None,
+        dpi: None,
+        notes: vec![],
+        jpeg_quality: None,
+    };
+    let path = dir.path().join("stripes.png");
+    denoise_io::write(&path, &img, None, &info, &ExportOptions::default()).unwrap();
+
+    let mut h = Harness::builder().with_size(SIZE).wgpu().build_eframe(|cc| ApsophosApp::new(cc, Vec::new()));
+    open_dropped(&mut h, path);
+    h.state_mut().settings.export.upscale = Some(Upscale { factor: Factor::X2, detail: Detail::Faithful });
+    h.state_mut().start_denoise();
+    let wait = |h: &mut Harness<'_, ApsophosApp>, what: &str, done: &dyn Fn(&ApsophosApp) -> bool| {
+        let start = Instant::now();
+        while !done(h.state()) {
+            assert!(start.elapsed() < Duration::from_secs(300), "timed out waiting for {what}");
+            h.step();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    wait(&mut h, "the noise reduction", &|app| app.doc.as_ref().is_some_and(|d| d.is_complete()));
+    h.state_mut().view.set_zoom_percent(200.0);
+    h.run_steps(20);
+    wait(&mut h, "the enlargement to start", &|app| app.enlarged.status() == Status::Working);
+    wait(&mut h, "the enlargement of the view", &|app| app.enlarged.status() == Status::Ready);
+    h.run_steps(4);
+    assert_eq!(h.state().enlarged.upscale().map(|u| u.factor), Some(Factor::X2));
+    let area = h.state().view.visible_pixels();
+    assert!(!h.state_mut().enlarged.shown(area).is_empty(), "the view shows enlarged tiles");
+    let image = h.render().unwrap();
+    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/screenshots");
+    std::fs::create_dir_all(&out).unwrap();
+    image.save(out.join("enlarged.png")).unwrap();
+}

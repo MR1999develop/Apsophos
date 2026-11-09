@@ -1,9 +1,11 @@
 //! Central panel: the viewer, the notice bar, the empty state and the drop
 //! overlay.
 
+use denoise_core::PixelRect;
 use eframe::egui::{self, vec2, Align, Button, Layout, RichText};
 
 use crate::app::*;
+use crate::enlarged_view::Status;
 use crate::format::{file_name, truncate_middle};
 use crate::text::tr;
 use crate::theme::*;
@@ -19,6 +21,19 @@ impl ApsophosApp {
         let frame = egui::Frame::new().fill(t.canvas);
         let panel = egui::CentralPanel::default().frame(frame).show(root, |ui| {
             self.notice_bar(ui, &t);
+            // the enlargement of the area in view, where it is ready
+            let shown = self.enlarged.upscale();
+            let area = self.view.visible_pixels();
+            let enlarged: Vec<(PixelRect, egui::TextureId)> = match shown {
+                Some(_) => self.enlarged.shown(area).into_iter().map(|(r, tex)| (r, tex.id())).collect(),
+                None => Vec::new(),
+            };
+            let after_label = shown.map(|u| (tr().viewer.after_enlarged)(&format!("{}×", u.factor.value())));
+            let enlarge_note = match self.enlarged.status() {
+                Status::Working => Some(tr().viewer.enlarging_view),
+                Status::ZoomIn => Some(tr().viewer.enlarge_zoom_in),
+                Status::Off | Status::Ready | Status::Failed => None,
+            };
             let input = ViewerInput {
                 tokens: &t,
                 params: &self.settings.params,
@@ -27,6 +42,9 @@ impl ApsophosApp {
                 reduce_motion: self.settings.reduce_motion,
                 working_on: self.working_on(),
                 picking_point: self.picking_preview_point,
+                enlarged: &enlarged,
+                after_label,
+                enlarge_note,
             };
             if let Some(doc) = self.doc.as_mut() {
                 let out = viewer::show(ui, &mut self.view, doc, &input);

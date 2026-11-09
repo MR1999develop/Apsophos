@@ -111,6 +111,18 @@ pub enum Command {
     /// Enlarges the tile of the export that holds the pixel `at` of the open
     /// image, for the before/after preview.
     PreviewUpscale { doc_id: u64, job: ExportJob, at: (usize, usize), upscale: Upscale, models: UpscaleModels },
+    /// Enlarges the export's tiles over `area` of the open image, other
+    /// than `have`, for the viewer; each tile is sent as it is done.
+    EnlargeView {
+        doc_id: u64,
+        request: u64,
+        job: ExportJob,
+        upscale: Upscale,
+        models: UpscaleModels,
+        area: PixelRect,
+        have: Vec<usize>,
+        control: Arc<JobControl>,
+    },
     /// Processes and exports a series of files (enlarged if `export` says so).
     Batch {
         model: ModelConfig,
@@ -171,6 +183,19 @@ pub enum Msg {
         doc_id: u64,
         upscale: Upscale,
         result: Result<upscaling::Preview, String>,
+    },
+    /// An enlarged tile for the viewer: `rect` of the photo, `pixels` its
+    /// enlargement.
+    ViewTile {
+        request: u64,
+        index: usize,
+        rect: PixelRect,
+        pixels: Image,
+    },
+    /// End of a request for the viewer: done, stopped (`Err(None)`) or failed.
+    ViewEnlarged {
+        request: u64,
+        result: Result<(), Option<String>>,
     },
     /// An enlargement completed with `upscale` on the device setting
     /// `device` at `speed`: to remember for the next estimate.
@@ -548,7 +573,13 @@ impl Timed<'_> {
 
 fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
     let mut nets = Networks::default();
+    // the photo as the viewer's enlargement sees it (blended with the
+    // sliders), kept between its requests and freed by any other command
+    let mut view_input: Option<(u64, Params, Image)> = None;
     for cmd in rx {
+        if !matches!(cmd, Command::EnlargeView { .. }) {
+            view_input = None;
+        }
         let result = catch_unwind(AssertUnwindSafe(|| match cmd {
             Command::Prepare { model } => {
                 let before = nets.denoiser.as_ref().map(|l| (l.config == model, l.model.input_px()));
@@ -610,6 +641,33 @@ fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
                     })
                 });
                 out.send(Msg::UpscalePreview { doc_id, upscale, result });
+            }
+            Command::EnlargeView { doc_id, request, job, upscale, models, area, have, control } => {
+                let result = if control.is_cancelled() {
+                    Err(None)
+                } else {
+                    if !view_input.as_ref().is_some_and(|(d, p, _)| *d == doc_id && *p == job.params) {
+                        // the old one is freed before the new one is made
+                        drop(view_input.take());
+                        view_input = Some((doc_id, job.params, blend(&job.original, &job.raw, &job.params)));
+                    }
+                    match (&view_input, nets.upscaler(upscale, &models, out)) {
+                        (_, Err(e)) => Err(Some(e)),
+                        (None, _) => Err(None),
+                        (Some((_, _, img)), Ok(m)) => {
+                            let mut send = |index, rect, pixels: &Image| {
+                                out.send(Msg::ViewTile { request, index, rect, pixels: pixels.clone() });
+                            };
+                            upscaling::enlarge_area(img, &job.info, m, area, &have, &control, &mut send).map_err(|e| {
+                                match e {
+                                    ExportError::Cancelled => None,
+                                    ExportError::Failed(why) => Some(why),
+                                }
+                            })
+                        }
+                    }
+                };
+                out.send(Msg::ViewEnlarged { request, result });
             }
             Command::Batch { model, upscalers, items, params, export, control } => {
                 let batch = Batch { config: &model, upscalers: &upscalers, params: &params, export: &export };

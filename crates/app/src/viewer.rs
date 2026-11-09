@@ -52,7 +52,7 @@ impl ImagePos {
     }
 }
 
-fn texture_options() -> TextureOptions {
+pub fn texture_options() -> TextureOptions {
     TextureOptions {
         // sharp pixels above 100 %, smooth when zoomed out
         magnification: TextureFilter::Nearest,
@@ -406,7 +406,7 @@ impl ViewState {
     }
 
     /// Image pixels visible in the view.
-    fn visible_pixels(&self) -> PixelRect {
+    pub fn visible_pixels(&self) -> PixelRect {
         let a = self.to_image(self.canvas.min);
         let b = self.to_image(self.canvas.max);
         let (w, h) = self.image_size();
@@ -452,6 +452,13 @@ pub struct ViewerInput<'a> {
     /// A click chooses a point (of the enlargement preview) instead of
     /// moving or zooming the view.
     pub picking_point: bool,
+    /// The enlarged tiles over the view: their area in the photo and their
+    /// texture, drawn over the result.
+    pub enlarged: &'a [(PixelRect, egui::TextureId)],
+    /// The label of the "after" side when the enlargement is shown.
+    pub after_label: Option<String>,
+    /// What the viewer says about the enlargement, at the bottom left.
+    pub enlarge_note: Option<&'a str>,
 }
 
 /// Name and state of the image area for screen readers: it is drawn by
@@ -573,6 +580,10 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
                 p.image(tex.id(), view.screen_rect(display.tile_rect(i)), uv, Color32::WHITE);
             }
         }
+        // the enlargement, where it is ready, over the result at its size
+        for &(r, id) in input.enlarged {
+            p.image(id, view.screen_rect(r), uv, Color32::WHITE);
+        }
     }
 
     if let Some(r) = input.working_on {
@@ -588,7 +599,8 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         let at = pos2(canvas.center().x, canvas.top() + SPACE_M);
         badge(&painter, at, egui::Align2::CENTER_TOP, tr().export.preview_picking, t);
     } else if split_on {
-        draw_split(&painter, canvas, split_x, &input.result_view.label(), t);
+        let after = input.after_label.clone().unwrap_or_else(|| input.result_view.label());
+        draw_split(&painter, canvas, split_x, &after, t);
     } else if input.show_original {
         badge(
             &painter,
@@ -597,6 +609,10 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
             tr().viewer.original,
             t,
         );
+    }
+
+    if let Some(note) = input.enlarge_note {
+        badge(&painter, canvas.left_bottom() + vec2(SPACE_M, -SPACE_M), egui::Align2::LEFT_BOTTOM, note, t);
     }
 
     if let Some(thumb) = &display.thumb {

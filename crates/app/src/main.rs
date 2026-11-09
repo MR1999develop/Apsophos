@@ -5,6 +5,7 @@ mod app;
 mod color;
 mod document;
 mod download;
+mod enlarged_view;
 mod errors;
 mod files;
 mod format;

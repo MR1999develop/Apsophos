@@ -130,6 +130,33 @@ pub fn preview(
     })
 }
 
+/// The tiles of the export's enlargement over `area` of `img`, from the
+/// nearest to its centre, leaving out `have`: each handed to `on_tile` (its
+/// index, its area in the photo, the enlarged pixels) as soon as it is
+/// done. The same plan, network and colour handling as [`write_enlarged`],
+/// so the pixels are those of the file.
+///
+/// # Errors
+/// As [`write_enlarged`].
+pub fn enlarge_area(
+    img: &Image,
+    info: &SourceInfo,
+    model: &mut dyn TileModel,
+    area: PixelRect,
+    have: &[usize],
+    control: &JobControl,
+    on_tile: &mut dyn FnMut(usize, PixelRect, &Image),
+) -> Result<(), ExportError> {
+    with_network_space(model, info.icc.as_deref(), |m| {
+        let plan = TilePlan::for_model(img.width(), img.height(), m)?;
+        #[expect(clippy::cast_precision_loss, reason = "a centre for sorting")]
+        let centre = (area.x as f32 + area.width as f32 / 2.0, area.y as f32 + area.height as f32 / 2.0);
+        let order = plan.order_from(Some(centre), |i| !have.contains(&i) && !plan.rect(i).intersect(&area).is_empty());
+        run_tiles(img, m, &plan, &order, &mut |t: TileOutput<'_>| on_tile(t.index, t.rect, t.pixels), control)?;
+        Ok(())
+    })
+}
+
 /// The enlargement of a photo, as bands for the writer.
 struct Enlargement<'a> {
     bands: Bands<'a>,
@@ -317,6 +344,31 @@ mod tests {
         assert!(r.x <= 20 && 20 < r.right() && r.y <= 15 && 15 < r.bottom());
         assert_eq!(p.network, whole.crop(PixelRect::new(r.x * 2, r.y * 2, r.width * 2, r.height * 2)));
         assert_eq!((p.classical.width(), p.classical.height()), (r.width * 2, r.height * 2));
+    }
+
+    #[test]
+    fn the_view_gets_the_exported_tiles_over_its_area() {
+        let img = Image::from_rgb(40, 30, (0..3600).map(|i| (i % 97) as f32 / 96.0).collect()).unwrap();
+        let src = info(FileFormat::Png);
+        let whole = denoise_core::upscale::upscale(&img, &mut Nearest, &mut |_, _| {}, &JobControl::default()).unwrap();
+        let area = PixelRect::new(14, 10, 6, 5);
+        let mut got = Vec::new();
+        enlarge_area(&img, &src, &mut Nearest, area, &[], &JobControl::default(), &mut |i, r, px| {
+            got.push((i, r));
+            assert_eq!(*px, whole.crop(PixelRect::new(r.x * 2, r.y * 2, r.width * 2, r.height * 2)));
+        })
+        .unwrap();
+        // every tile touches the area, and together they cover it
+        assert!(got.iter().all(|(_, r)| !r.intersect(&area).is_empty()));
+        let covered: usize = got.iter().map(|(_, r)| r.intersect(&area).area()).sum();
+        assert_eq!(covered, area.area());
+        // the nearest to the centre first; tiles already there are left out
+        let (first, _) = got[0];
+        let mut again = Vec::new();
+        enlarge_area(&img, &src, &mut Nearest, area, &[first], &JobControl::default(), &mut |i, _, _| again.push(i))
+            .unwrap();
+        assert_eq!(again.len(), got.len() - 1);
+        assert!(!again.contains(&first));
     }
 
     #[test]
