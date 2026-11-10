@@ -136,7 +136,10 @@ impl ApsophosApp {
                 ui.label(weak(e, t));
             }
             ui.horizontal(|ui| {
-                if ui.button(if paused { tx.resume } else { tx.pause }).on_hover_text(tx.pause_tip).clicked() {
+                let pause = ui.button(if paused { tx.resume } else { tx.pause });
+                // "Add files…" is disabled while the queue runs: F6 lands here
+                self.panes.land_on(Pane::Queue, &pause);
+                if pause.on_hover_text(tx.pause_tip).clicked() {
                     self.toggle_queue_pause();
                 }
                 // the only Stop control for the queue (also Esc)
