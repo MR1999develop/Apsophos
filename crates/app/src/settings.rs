@@ -2,9 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use denoise_core::upscale::{Detail, Upscale};
 use denoise_core::{product, Params};
-use denoise_engine::{Device, EngineOptions, TileProfile, UpscaleSpeed, MODEL_FILE};
+use denoise_engine::{Device, EngineOptions, TileProfile, MODEL_FILE};
 use denoise_io::ExportOptions;
 use serde::{Deserialize, Serialize};
 
@@ -25,54 +24,23 @@ pub enum Destination {
     Folder(PathBuf),
 }
 
-/// Export settings (also used by the queue): what is done to the photo,
-/// noise reduction and enlargement, each on its own, and where it goes.
+/// Export settings (also used by the queue).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExportSettings {
-    /// The noise is reduced before anything else; off, the photo is
-    /// enlarged (or written) as it was opened.
-    pub reduce_noise: bool,
     pub options: ExportOptions,
     /// Appended to the name: `photo` → `photo_dn`.
     pub suffix: String,
     pub destination: Destination,
-    /// Enlargement by a network, the last step before the file; `None`: the
-    /// photo keeps its size.
-    pub upscale: Option<Upscale>,
 }
 
 impl Default for ExportSettings {
     fn default() -> Self {
-        Self {
-            reduce_noise: true,
-            options: ExportOptions::default(),
-            suffix: "_dn".into(),
-            destination: Destination::SameAsSource,
-            upscale: None,
-        }
+        Self { options: ExportOptions::default(), suffix: "_dn".into(), destination: Destination::SameAsSource }
     }
 }
 
 impl ExportSettings {
-    /// The suffix of what is done: `_dn`, `_dn_2x`, `_dn_4x-gen` (generated
-    /// detail is said in the name), `_2x` without noise reduction.
-    pub fn full_suffix(&self) -> String {
-        let denoised = if self.reduce_noise { self.suffix.as_str() } else { "" };
-        let Some(u) = self.upscale else { return denoised.to_owned() };
-        let detail = match u.detail {
-            Detail::Faithful => "",
-            Detail::Generated => "-gen",
-        };
-        format!("{denoised}_{}x{detail}", u.factor.value())
-    }
-
-    /// Something is done to the photo: an export with neither step would
-    /// only copy it.
-    pub fn changes_the_photo(&self) -> bool {
-        self.reduce_noise || self.upscale.is_some()
-    }
-
     /// Destination folder for `source`.
     pub fn dir_for(&self, source: &Path) -> PathBuf {
         match &self.destination {
@@ -94,20 +62,6 @@ pub struct TileHint {
     pub profile: Option<TileProfile>,
 }
 
-/// The speed of the last enlargement made with one choice (2× or 4×,
-/// faithful or generated) and one device setting.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct UpscaleTiming {
-    pub upscale: Upscale,
-    pub device: Device,
-    pub speed: UpscaleSpeed,
-}
-
-/// The measured speed for `upscale` on `device`, if an enlargement measured it.
-pub fn upscale_speed(timings: &[UpscaleTiming], upscale: Upscale, device: Device) -> Option<UpscaleSpeed> {
-    timings.iter().find(|t| t.upscale == upscale && t.device == device).map(|t| t.speed)
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -126,22 +80,9 @@ pub struct Settings {
     pub show_queue: bool,
     /// Interface language; `None` follows the system.
     pub language: Option<Language>,
-    /// The user asked not to be offered the upscaling models at start.
-    pub no_upscaler_offer: bool,
-    /// Enlargement speeds measured on this computer, at most one for each
-    /// choice and device setting: they give the time estimate in the export
-    /// settings.
-    pub upscale_timings: Vec<UpscaleTiming>,
 }
 
 impl Settings {
-    /// Remembers the speed of an enlargement just made, in place of the
-    /// earlier one for the same choice and device setting.
-    pub fn remember_upscale_speed(&mut self, upscale: Upscale, device: Device, speed: UpscaleSpeed) {
-        self.upscale_timings.retain(|t| !(t.upscale == upscale && t.device == device));
-        self.upscale_timings.push(UpscaleTiming { upscale, device, speed });
-    }
-
     pub fn push_recent(&mut self, path: &Path) {
         self.recent.retain(|p| p != path);
         self.recent.insert(0, path.to_path_buf());
@@ -172,23 +113,6 @@ impl Settings {
     /// First existing model.
     pub fn find_model(&self) -> Option<PathBuf> {
         self.model_candidates().into_iter().find(|p| p.is_file())
-    }
-
-    /// The upscaling model files: in the denoiser's model folder, then in
-    /// the folder the downloads go to.
-    pub fn upscaler_files(&self) -> Vec<PathBuf> {
-        let dirs = [self.find_model().and_then(|p| p.parent().map(Path::to_path_buf)), crate::download::download_dir()];
-        let mut found: Vec<PathBuf> = Vec::new();
-        for dir in dirs.into_iter().flatten() {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-            for path in rd.filter_map(Result::ok).map(|e| e.path()) {
-                let known = found.iter().any(|f| f.file_name() == path.file_name());
-                if !known && denoise_engine::upscaler_file_kind(&path).is_some() {
-                    found.push(path);
-                }
-            }
-        }
-        found
     }
 
     /// Models (same network, different tile sizes) to offer the engine: a
@@ -235,43 +159,6 @@ mod tests {
         assert_eq!(s.recent.len(), MAX_RECENT);
         assert_eq!(s.recent[0], Path::new("/photos/3.tif"));
         assert_eq!(s.recent.iter().filter(|p| p.ends_with("3.tif")).count(), 1);
-    }
-
-    #[test]
-    fn each_choice_keeps_its_last_speed() {
-        use denoise_core::upscale::Factor;
-        let x2 = Upscale { factor: Factor::X2, detail: Detail::Faithful };
-        let x4 = Upscale { factor: Factor::X4, detail: Detail::Faithful };
-        let speed = |secs_per_tile| UpscaleSpeed { tile_px: 640, secs_per_tile };
-        let mut s = Settings::default();
-        assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Auto), None);
-        s.remember_upscale_speed(x2, Device::Auto, speed(5.0));
-        s.remember_upscale_speed(x4, Device::Auto, speed(9.0));
-        s.remember_upscale_speed(x2, Device::Cpu, speed(80.0));
-        // a new measure replaces the old one
-        s.remember_upscale_speed(x2, Device::Auto, speed(4.0));
-        assert_eq!(s.upscale_timings.len(), 3);
-        assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Auto), Some(speed(4.0)));
-        assert_eq!(upscale_speed(&s.upscale_timings, x2, Device::Cpu), Some(speed(80.0)));
-        assert_eq!(upscale_speed(&s.upscale_timings, x4, Device::Cpu), None);
-    }
-
-    #[test]
-    fn the_suffix_says_what_is_done() {
-        use denoise_core::upscale::Factor;
-        let x2 = Upscale { factor: Factor::X2, detail: Detail::Faithful };
-        let x4_gen = Upscale { factor: Factor::X4, detail: Detail::Generated };
-        let mut e = ExportSettings::default();
-        assert_eq!((e.full_suffix(), e.changes_the_photo()), ("_dn".to_owned(), true));
-        e.upscale = Some(x4_gen);
-        assert_eq!(e.full_suffix(), "_dn_4x-gen");
-        // without noise reduction only the enlargement is named
-        e.reduce_noise = false;
-        assert_eq!(e.full_suffix(), "_4x-gen");
-        e.upscale = Some(x2);
-        assert_eq!(e.full_suffix(), "_2x");
-        e.upscale = None;
-        assert!(!e.changes_the_photo());
     }
 
     #[test]

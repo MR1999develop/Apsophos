@@ -5,21 +5,16 @@
 //! from the real executable, so it uses the same libraries (DirectML.dll and
 //! the TensorRT for RTX DLLs next to the program) as the application. On a
 //! GPU it stops at the first tile size that fails: the larger ones would need
-//! even more memory. On each GPU it also enlarges an image with the faithful
-//! upscaling models through the whole export path, and leaves the results
-//! next to the report.
+//! even more memory.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use denoise_core::upscale::{Detail, Factor, Upscale};
 use denoise_core::{denoise, Image, JobControl, Preset, TileModel};
-use denoise_engine::{tile_px_for, Device, EngineOptions, Scunet, TileProfile, Upscaler};
-use denoise_io::{BitDepth, ExportFormat, ExportOptions, FileFormat, SourceInfo};
+use denoise_engine::{tile_px_for, Device, EngineOptions, Scunet, TileProfile};
 
 use crate::settings::Settings;
-use crate::upscaling::{write_enlarged, Output};
 
 /// Gradients and squares plus reproducible noise (σ ≈ 0.06); returns
 /// `(clean, noisy)`.
@@ -120,65 +115,6 @@ fn check(out: &mut String, model_path: &Path, device: Device, scene_px: (usize, 
     }
 }
 
-/// Enlarges a 1024×768 image with the faithful model for `factor` on
-/// `device`, through the whole export path (network, colour handling,
-/// writer), into a PNG next to `report`.
-fn check_upscaler(out: &mut String, files: &[PathBuf], device: Device, factor: Factor, report: &Path) {
-    let tag = format!("[{device:?}, enlarge {}x]", factor.value());
-    let upscale = Upscale { factor, detail: Detail::Faithful };
-    if denoise_engine::upscaler_files(files, upscale).is_empty() {
-        let _ = writeln!(out, "{tag} model not installed");
-        return;
-    }
-    let t = Instant::now();
-    let mut model = match Upscaler::load(files, upscale, &EngineOptions { device, threads: None }) {
-        Ok(m) => m,
-        Err(e) => {
-            let _ = writeln!(out, "{tag} failed: {e}");
-            return;
-        }
-    };
-    let load = t.elapsed().as_secs_f32();
-    if !model.on_gpu() {
-        // on the CPU a megapixel takes minutes: not timed here
-        let _ = writeln!(out, "{tag} GPU not used: {}", model.gpu_fallback().unwrap_or("-"));
-        return;
-    }
-    let (w, h) = (1024, 768);
-    let (img, _) = scene(w, h);
-    let path = report.with_file_name(format!("self-test-enlarged-{}x.png", factor.value()));
-    let info = SourceInfo {
-        format: FileFormat::Png,
-        bit_depth: BitDepth::U8,
-        gray: false,
-        icc: None,
-        exif: None,
-        xmp: None,
-        xmp_extended: None,
-        dpi: None,
-        notes: vec![],
-        jpeg_quality: None,
-    };
-    let opts = ExportOptions { format: ExportFormat::SameAsSource, jpeg_quality: 90 };
-    let target = Output { path: &path, info: &info, opts: &opts };
-    let t = Instant::now();
-    let result = write_enlarged(&target, &img, None, &mut model, &mut |_, _| {}, &JobControl::default());
-    let secs = t.elapsed().as_secs_f32();
-    let f = factor.value();
-    let _ = match result {
-        Ok(()) => writeln!(
-            out,
-            "{tag} OK on {}: {:.1} s per input megapixel ({secs:.1} s for {w}x{h} -> {}x{}, written to {}); load {load:.1} s",
-            model.device(),
-            secs / (w * h) as f32 * 1e6,
-            w * f,
-            h * f,
-            path.display()
-        ),
-        Err(e) => writeln!(out, "{tag} failed: {e:?}"),
-    };
-}
-
 /// The tile size the program would use for some typical image sizes.
 fn report_profile(out: &mut String, profile: &TileProfile) {
     for (w, h, what) in [(6000, 4000, "24 MP photo"), (4032, 3024, "12 MP phone photo"), (2048, 1536, "3 MP image")] {
@@ -269,13 +205,6 @@ pub fn run(report: &Path) -> std::io::Result<()> {
             }
         }
         std::fs::write(report, &out)?;
-    }
-    let upscalers = Settings::default().upscaler_files();
-    for &device in &gpus {
-        for factor in Factor::ALL {
-            check_upscaler(&mut out, &upscalers, device, factor, report);
-            std::fs::write(report, &out)?;
-        }
     }
     for m in models.iter().filter(|m| matches!(tile_px_for(m), 448 | 960)) {
         check(&mut out, m, Device::Cpu, (1280, 960));

@@ -74,22 +74,6 @@ impl ApsophosApp {
                                 .desired_width(STATUS_BAR_PROGRESS_W)
                                 .text(text),
                         );
-                    } else if let Some(run) = self.upscaling.as_ref().filter(|r| r.total > 0) {
-                        let mut text = (tx.tile)(run.done, run.total);
-                        if let Some(e) = format::eta(run.started.elapsed(), run.done, run.total) {
-                            text.push_str(" · ");
-                            text.push_str(&e);
-                        }
-                        ui.add(
-                            egui::ProgressBar::new(format::fraction(run.done, run.total))
-                                .desired_width(STATUS_BAR_PROGRESS_W)
-                                .text(text),
-                        );
-                    } else if let Some(d) = &self.download {
-                        #[expect(clippy::cast_precision_loss, reason = "a fraction for the bar")]
-                        let fraction = if d.total == 0 { 0.0 } else { d.done as f32 / d.total as f32 };
-                        let text = (tx.download)(&format::bytes(d.done), &format::bytes(d.total));
-                        ui.add(egui::ProgressBar::new(fraction).desired_width(STATUS_BAR_PROGRESS_W).text(text));
                     } else if let Some(run) = &self.queue.running {
                         let finished = self.queue.finished().min(run.total);
                         ui.add(

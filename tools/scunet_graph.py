@@ -5,8 +5,7 @@ input, built from the original KAIR weights.
 The graph reproduces SCUNet(in_nc=3, config=[4]*7, dim=64): a U-Net with
 three down-sampling stages, a body and three up-sampling stages, each made of
 Swin-Conv blocks (a convolution branch and a window-attention branch side by
-side). The graph builder and the Swin block, shared with the upscaler's
-graph, are in `onnx_graph.py`.
+side). The graph builder and the Swin block are in `onnx_graph.py`.
 
 The input side must be a multiple of 64 (three halvings and 8×8 windows);
 the input is 1×3×N×N in 0..1, the output has the same shape.

@@ -33,15 +33,11 @@ serde.workspace = true
 eframe = { version = "0.37", features = ["persistence"] }
 rfd = "0.17"
 dirs = "7"
-# the upscaling models, downloaded only when the user asks: HTTPS through
-# Windows' own TLS and certificate store (SChannel), and their SHA-256
-ureq = { version = "3.5", default-features = false, features = ["native-tls-no-default"] }
-sha2 = "0.11"
 # the system language, to pick the interface language
 sys-locale = "0.3"
 opener = { version = "0.9", features = ["reveal"] }
 # available memory, to refuse images that would not fit before decoding them
-sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 # colour management of the viewer (Little CMS, built from source)
 lcms2 = { version = "6.2", features = ["static"] }
 # log file

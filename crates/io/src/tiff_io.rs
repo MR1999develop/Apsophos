@@ -390,8 +390,8 @@ mod tests {
     #[test]
     fn exif_pixel_dimensions_are_those_of_the_file_written() {
         let dir = tempfile::tempdir().unwrap();
-        // a photo of 8 × 6 according to its EXIF, written as 16 × 12 (as an
-        // enlargement would), from an EXIF block in either byte order
+        // a photo of 8 × 6 according to its EXIF, written as 16 × 12, from
+        // an EXIF block in either byte order
         let img = gradient(16, 12);
         for little in [true, false] {
             let mut src = info(BitDepth::U16, false);

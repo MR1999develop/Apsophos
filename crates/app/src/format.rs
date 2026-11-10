@@ -36,17 +36,6 @@ pub fn duration(d: Duration) -> String {
     (tr().numbers.duration)(s / 3600, (s % 3600) / 60, s % 60)
 }
 
-/// A size in bytes: `850 MB`, `2.3 GB`.
-pub fn bytes(n: u64) -> String {
-    #[expect(clippy::cast_precision_loss, reason = "shown with one decimal")]
-    let gb = n as f64 / 1e9;
-    if gb >= 1.0 {
-        format!("{} GB", dec(denoise_core::num::narrow(gb), 1))
-    } else {
-        format!("{} MB", int(usize::try_from(n / 1_000_000).unwrap_or(usize::MAX)))
-    }
-}
-
 /// Megapixels: `24.2 MP`.
 pub fn megapixels(w: usize, h: usize) -> String {
     let mp = (w * h) as f32 / 1e6;
@@ -61,18 +50,6 @@ pub fn eta(elapsed: Duration, done: usize, total: usize) -> Option<String> {
         let left = per.saturating_mul(u32::try_from(total - done).unwrap_or(u32::MAX));
         (tr().numbers.time_left)(&duration(left))
     })
-}
-
-/// The time an enlargement should take, from `secs` estimated with the
-/// speed measured on this computer: `about 2 min 30 s on this computer`, or
-/// that no enlargement has measured it yet.
-pub fn upscale_estimate(secs: Option<f64>) -> String {
-    let te = &tr().export;
-    // at least a second: "about 0 s" would read as "instant"
-    match secs.filter(|s| s.is_finite()).and_then(|s| Duration::try_from_secs_f64(s.max(1.0)).ok()) {
-        Some(d) => (te.upscale_time)(&duration(d)),
-        None => te.upscale_time_unknown.to_owned(),
-    }
 }
 
 /// Progress 0..=1 (0 for an empty job).
@@ -166,17 +143,6 @@ mod tests {
         assert!(fraction(3, 0).abs() < 1e-6 && (fraction(5, 4) - 1.0).abs() < 1e-6);
         assert_eq!(processing(3, 12), "Processing · 3/12");
         assert_eq!(processing(0, 0), "Processing…");
-    }
-
-    #[test]
-    fn enlargement_estimates() {
-        assert_eq!(upscale_estimate(Some(150.4)), "Enlargement time: about 2 min 30 s on this computer");
-        assert_eq!(upscale_estimate(Some(0.2)), "Enlargement time: about 1 s on this computer");
-        let unknown = "Enlargement time: not measured yet (the first enlargement measures it)";
-        assert_eq!(upscale_estimate(None), unknown);
-        // values that are no time at all
-        assert_eq!(upscale_estimate(Some(f64::NAN)), unknown);
-        assert_eq!(upscale_estimate(Some(f64::INFINITY)), unknown);
     }
 
     #[test]

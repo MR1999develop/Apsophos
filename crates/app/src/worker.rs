@@ -1,9 +1,7 @@
 //! Background work: the interface never does I/O or computation.
 //!
 //! * A "model" thread owns the ONNX sessions (expensive to load) and runs, in
-//!   order, noise reduction of the open image, its enlarged exports and the
-//!   queue. It keeps one network at a time in memory, the denoiser or an
-//!   upscaler, so the two never share a GPU's memory.
+//!   order, noise reduction of the open image and the queue.
 //! * Opening and exporting a file run in separate short-lived threads, so
 //!   another image can be opened while the network is working.
 //!
@@ -16,21 +14,18 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-use denoise_core::upscale::Upscale;
 use denoise_core::{
     blend, run_tiles, DenoiseError, Image, JobControl, Params, PixelRect, TileModel, TileOutput, TilePlan,
 };
-use denoise_engine::{EngineOptions, Scunet, TileProfile, UpscaleSpeed, Upscaler};
+use denoise_engine::{EngineOptions, Scunet, TileProfile};
 use denoise_io::{ExportOptions, Picture, ReadLimits, SourceInfo};
 use eframe::egui;
 
-use crate::download;
 use crate::errors;
 use crate::network_space::with_network_space;
 use crate::resources;
 use crate::settings::ExportSettings;
 use crate::text::tr;
-use crate::upscaling::{self, ExportError};
 
 /// Model to use: if it changes, the worker reloads it.
 #[derive(Clone, Debug)]
@@ -71,14 +66,6 @@ impl PartialEq for ModelConfig {
 }
 
 /// Status of a queued file.
-/// The upscaling models on disk and the device to run them on.
-#[derive(Clone, Debug, PartialEq)]
-pub struct UpscaleModels {
-    /// The files of the model folder; the engine picks those it needs.
-    pub files: Vec<PathBuf>,
-    pub engine: EngineOptions,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum ItemStatus {
     Queued,
@@ -105,29 +92,9 @@ pub enum Command {
         order: Vec<usize>,
         control: Arc<JobControl>,
     },
-    /// Exports the open image enlarged: the upscaler runs here, one row of
-    /// tiles at a time, straight into the file.
-    ExportUpscaled { job: ExportJob, upscale: Upscale, models: UpscaleModels, control: Arc<JobControl> },
-    /// Enlarges the tile of the export that holds the pixel `at` of the open
-    /// image, for the before/after preview.
-    PreviewUpscale { doc_id: u64, job: ExportJob, at: (usize, usize), upscale: Upscale, models: UpscaleModels },
-    /// Enlarges the export's tiles over `area` of the open image, other
-    /// than `have`, for the viewer; each tile is sent as it is done.
-    EnlargeView {
-        doc_id: u64,
-        request: u64,
-        job: ExportJob,
-        upscale: Upscale,
-        models: UpscaleModels,
-        area: PixelRect,
-        have: Vec<usize>,
-        control: Arc<JobControl>,
-    },
-    /// Processes and exports a series of files (enlarged if `export` says so).
+    /// Processes and exports a series of files.
     Batch {
-        /// `None`: the noise is not reduced.
-        model: Option<ModelConfig>,
-        upscalers: UpscaleModels,
+        model: ModelConfig,
         items: Vec<(usize, PathBuf)>,
         params: Params,
         export: ExportSettings,
@@ -173,52 +140,8 @@ pub enum Msg {
         doc_id: u64,
         result: Result<(), Option<String>>,
     },
-    /// An upscaler is loaded: where it runs, and why not on the GPU asked
-    /// for, if that happened.
-    UpscalerReady {
-        device: String,
-        gpu_fallback: Option<String>,
-    },
-    /// The before/after preview of an enlargement, or why it failed.
-    UpscalePreview {
-        doc_id: u64,
-        upscale: Upscale,
-        result: Result<upscaling::Preview, String>,
-    },
-    /// An enlarged tile for the viewer: `rect` of the photo, `pixels` its
-    /// enlargement.
-    ViewTile {
-        request: u64,
-        index: usize,
-        rect: PixelRect,
-        pixels: Image,
-    },
-    /// End of a request for the viewer: done, stopped (`Err(None)`) or failed.
-    ViewEnlarged {
-        request: u64,
-        result: Result<(), Option<String>>,
-    },
-    /// An enlargement completed with `upscale` on the device setting
-    /// `device` at `speed`: to remember for the next estimate.
-    UpscaleMeasured {
-        upscale: Upscale,
-        device: denoise_engine::Device,
-        speed: UpscaleSpeed,
-    },
-    /// Progress of an enlarged export, in tiles.
-    ExportProgress {
-        done: usize,
-        total: usize,
-    },
-    /// Bytes of the upscaling models downloaded so far, and in all.
-    DownloadProgress {
-        done: u64,
-        total: u64,
-    },
-    /// End of the download: done, cancelled (`Err(None)`) or failed.
-    Downloaded(Result<(), Option<String>>),
     /// End of an export: the file, cancelled (`Err(None)`) or failed.
-    Exported(Result<PathBuf, Option<String>>),
+    Exported(Result<PathBuf, String>),
     BatchItem {
         index: usize,
         status: ItemStatus,
@@ -311,32 +234,6 @@ impl Worker {
         });
     }
 
-    /// Downloads the upscaling models `entries` into `dir` in a separate
-    /// thread (asked for by the user with a button).
-    pub fn download(&self, entries: Vec<download::Entry>, dir: PathBuf, control: Arc<JobControl>) {
-        let out = self.outbox.clone();
-        spawn_guarded(&self.outbox, "download", move || {
-            // at most a few progress messages a second
-            let mut last: Option<std::time::Instant> = None;
-            let mut progress = |done, total| {
-                if done == total || last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(100)) {
-                    last = Some(std::time::Instant::now());
-                    out.send(Msg::DownloadProgress { done, total });
-                }
-            };
-            let result = download::download(&entries, &dir, &mut progress, &control).map_err(|e| match e {
-                download::DownloadError::Cancelled => None,
-                download::DownloadError::Failed(why) => Some(why),
-            });
-            match &result {
-                Ok(()) => tracing::info!("upscaling models downloaded to {}", dir.display()),
-                Err(None) => tracing::info!("download of the upscaling models cancelled"),
-                Err(Some(e)) => tracing::warn!("download of the upscaling models failed: {e}"),
-            }
-            out.send(Msg::Downloaded(result));
-        });
-    }
-
     /// Blends and exports in a separate thread.
     pub fn export(&self, job: ExportJob) {
         let out = self.outbox.clone();
@@ -350,18 +247,17 @@ impl Worker {
                 &job.options,
             )
             .map(|()| job.path.clone())
-            .map_err(|e| Some(errors::io(&e)));
+            .map_err(|e| errors::io(&e));
             log_export(&job.path, &result);
             out.send(Msg::Exported(result));
         });
     }
 }
 
-fn log_export(path: &Path, result: &Result<PathBuf, Option<String>>) {
+fn log_export(path: &Path, result: &Result<PathBuf, String>) {
     match result {
         Ok(p) => tracing::info!("exported {}", p.display()),
-        Err(None) => tracing::info!("export to {} cancelled", path.display()),
-        Err(Some(e)) => tracing::warn!("export to {} failed: {e}", path.display()),
+        Err(e) => tracing::warn!("export to {} failed: {e}", path.display()),
     }
 }
 
@@ -460,127 +356,22 @@ fn ensure_model<'a>(slot: &'a mut Option<Loaded>, config: &ModelConfig, out: &Ou
     slot.as_mut().map(|l| &mut l.model)
 }
 
-/// The networks of the model thread. At most one is loaded at a time: the
-/// denoiser and an upscaler would not both fit in a small GPU's memory.
+/// The network of the model thread.
 #[derive(Default)]
 struct Networks {
     denoiser: Option<Loaded>,
-    upscaler: Option<(UpscaleModels, Upscaler)>,
 }
 
 impl Networks {
-    /// The denoiser for `config`, loading it if needed (and freeing the
-    /// upscaler first).
+    /// The denoiser for `config`, loading it if needed.
     fn denoiser(&mut self, config: &ModelConfig, out: &Outbox) -> Option<&mut Scunet> {
-        self.upscaler = None;
         ensure_model(&mut self.denoiser, config, out)
-    }
-
-    /// The upscaler for `upscale`, loading it if needed (and freeing the
-    /// denoiser first).
-    ///
-    /// # Errors
-    /// The reason it cannot be loaded, in the user's words.
-    fn upscaler(&mut self, upscale: Upscale, models: &UpscaleModels, out: &Outbox) -> Result<&mut Upscaler, String> {
-        let current = self.upscaler.as_ref().is_some_and(|(m, u)| m == models && u.upscale() == upscale);
-        if !current {
-            self.denoiser = None;
-            self.upscaler = None;
-            let u = Upscaler::load(&models.files, upscale, &models.engine).map_err(|e| {
-                tracing::error!("upscaler not loaded: {e}");
-                errors::engine(&e)
-            })?;
-            tracing::info!(
-                "upscaler {upscale:?} ready on {}{}",
-                u.device(),
-                u.gpu_fallback().map(|f| format!(" (GPU not used: {f})")).unwrap_or_default()
-            );
-            out.send(Msg::UpscalerReady {
-                device: u.device().to_owned(),
-                gpu_fallback: u.gpu_fallback().map(str::to_owned),
-            });
-            self.upscaler = Some((models.clone(), u));
-        }
-        self.upscaler.as_mut().map(|(_, u)| u).ok_or_else(|| tr().notices.model_not_available.to_owned())
-    }
-}
-
-/// Exports `job` enlarged by `upscale`; `Err(None)` if cancelled.
-fn export_upscaled(
-    nets: &mut Networks,
-    job: &ExportJob,
-    upscale: Upscale,
-    models: &UpscaleModels,
-    control: &JobControl,
-    out: &Outbox,
-) -> Result<PathBuf, Option<String>> {
-    // what could stop the export late is checked before loading anything
-    let dir = job.path.parent().unwrap_or_else(|| Path::new("."));
-    let size = (job.original.width(), job.original.height());
-    let scale = upscale.factor.value();
-    upscaling::preflight(size, scale, job.alpha.is_some(), &job.info, &job.options, dir).map_err(Some)?;
-    let model = nets.upscaler(upscale, models, out).map_err(Some)?;
-    let blended = blend(&job.original, &job.raw, &job.params);
-    let alpha = job.alpha.as_deref().map(Vec::as_slice);
-    let mut progress = |done, total| out.send(Msg::ExportProgress { done, total });
-    let target = upscaling::Output { path: &job.path, info: &job.info, opts: &job.options };
-    let timed = Timed { upscale, device: models.engine.device, out };
-    timed.write_enlarged(&target, &blended, alpha, model, &mut progress, control)?;
-    Ok(job.path.clone())
-}
-
-/// An enlargement that, once complete, reports how long its tiles took.
-struct Timed<'a> {
-    upscale: Upscale,
-    /// The device setting the upscaler was loaded with.
-    device: denoise_engine::Device,
-    out: &'a Outbox,
-}
-
-impl Timed<'_> {
-    /// [`upscaling::write_enlarged`], measured; `Err(None)` if cancelled,
-    /// otherwise the error message for the user.
-    fn write_enlarged(
-        &self,
-        target: &upscaling::Output<'_>,
-        img: &Image,
-        alpha: Option<&[f32]>,
-        model: &mut Upscaler,
-        progress: &mut dyn FnMut(usize, usize),
-        control: &JobControl,
-    ) -> Result<(), Option<String>> {
-        let started = std::time::Instant::now();
-        let mut tiles = 0;
-        let mut counted = |done, total| {
-            tiles = total;
-            progress(done, total);
-        };
-        upscaling::write_enlarged(target, img, alpha, model, &mut counted, control).map_err(|e| match e {
-            ExportError::Cancelled => None,
-            ExportError::Failed(why) => Some(why),
-        })?;
-        if let Some(speed) = UpscaleSpeed::measured(model.input_px(), started.elapsed(), tiles) {
-            tracing::info!(
-                "enlargement {:?}: {:.2} s per {} px tile",
-                self.upscale,
-                speed.secs_per_tile,
-                speed.tile_px
-            );
-            self.out.send(Msg::UpscaleMeasured { upscale: self.upscale, device: self.device, speed });
-        }
-        Ok(())
     }
 }
 
 fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
     let mut nets = Networks::default();
-    // the photo as the viewer's enlargement sees it (blended with the
-    // sliders), kept between its requests and freed by any other command
-    let mut view_input: Option<(u64, Params, Image)> = None;
     for cmd in rx {
-        if !matches!(cmd, Command::EnlargeView { .. }) {
-            view_input = None;
-        }
         let result = catch_unwind(AssertUnwindSafe(|| match cmd {
             Command::Prepare { model } => {
                 let before = nets.denoiser.as_ref().map(|l| (l.config == model, l.model.input_px()));
@@ -628,50 +419,8 @@ fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
                 };
                 out.send(Msg::Denoised { doc_id, result });
             }
-            Command::ExportUpscaled { job, upscale, models, control } => {
-                let result = export_upscaled(&mut nets, &job, upscale, &models, &control, out);
-                log_export(&job.path, &result);
-                out.send(Msg::Exported(result));
-            }
-            Command::PreviewUpscale { doc_id, job, at, upscale, models } => {
-                let result = nets.upscaler(upscale, &models, out).and_then(|m| {
-                    let blended = blend(&job.original, &job.raw, &job.params);
-                    upscaling::preview(&blended, &job.info, m, at, &JobControl::default()).map_err(|e| match e {
-                        ExportError::Cancelled => tr().errors.cancelled.to_owned(),
-                        ExportError::Failed(why) => why,
-                    })
-                });
-                out.send(Msg::UpscalePreview { doc_id, upscale, result });
-            }
-            Command::EnlargeView { doc_id, request, job, upscale, models, area, have, control } => {
-                let result = if control.is_cancelled() {
-                    Err(None)
-                } else {
-                    if !view_input.as_ref().is_some_and(|(d, p, _)| *d == doc_id && *p == job.params) {
-                        // the old one is freed before the new one is made
-                        drop(view_input.take());
-                        view_input = Some((doc_id, job.params, blend(&job.original, &job.raw, &job.params)));
-                    }
-                    match (&view_input, nets.upscaler(upscale, &models, out)) {
-                        (_, Err(e)) => Err(Some(e)),
-                        (None, _) => Err(None),
-                        (Some((_, _, img)), Ok(m)) => {
-                            let mut send = |index, rect, pixels: &Image| {
-                                out.send(Msg::ViewTile { request, index, rect, pixels: pixels.clone() });
-                            };
-                            upscaling::enlarge_area(img, &job.info, m, area, &have, &control, &mut send).map_err(|e| {
-                                match e {
-                                    ExportError::Cancelled => None,
-                                    ExportError::Failed(why) => Some(why),
-                                }
-                            })
-                        }
-                    }
-                };
-                out.send(Msg::ViewEnlarged { request, result });
-            }
-            Command::Batch { model, upscalers, items, params, export, control } => {
-                let batch = Batch { config: model.as_ref(), upscalers: &upscalers, params: &params, export: &export };
+            Command::Batch { model, items, params, export, control } => {
+                let batch = Batch { config: &model, params: &params, export: &export };
                 let cancelled = run_batch(&mut nets, &batch, &items, &control, out);
                 out.send(Msg::BatchFinished { cancelled });
             }
@@ -688,9 +437,7 @@ fn model_thread(rx: &Receiver<Command>, out: &Outbox) {
 /// read first, so that the tile size can be chosen for its size.
 /// What every file of a queue run is processed with.
 struct Batch<'a> {
-    /// The denoiser; `None`: the noise is not reduced.
-    config: Option<&'a ModelConfig>,
-    upscalers: &'a UpscaleModels,
+    config: &'a ModelConfig,
     params: &'a Params,
     export: &'a ExportSettings,
 }
@@ -734,12 +481,8 @@ fn run_batch(
     false
 }
 
-/// Processes and exports one file already read (noise reduction and the
-/// enlargement, each if the export asks for it); `Err(None)` if cancelled,
-/// otherwise the error message for the user. With the enlargement, each
-/// file loads both networks in turn: grouping the files would save those
-/// loads (2–3 % of the time) at the cost of gigabytes of denoised photos
-/// kept waiting (decision 7 of `docs/decisions/0001-ai-upscaling.md`).
+/// Denoises and exports one file already read; `Err(None)` if cancelled,
+/// otherwise the error message for the user.
 fn process_file(
     nets: &mut Networks,
     batch: &Batch<'_>,
@@ -752,40 +495,20 @@ fn process_file(
     let export = batch.export;
     let (format, _) = denoise_io::resolve(&picture.info, &export.options);
     let dir = export.dir_for(path);
-    let target = denoise_io::output_path(path, &dir, &export.full_suffix(), format.extension());
+    let target = denoise_io::output_path(path, &dir, &export.suffix, format.extension());
     let size = (picture.rgb.width(), picture.rgb.height());
-    let alpha = picture.alpha.as_deref();
-    if let Some(u) = export.upscale {
-        upscaling::preflight(size, u.factor.value(), alpha.is_some(), &picture.info, &export.options, &dir)
-            .map_err(Some)?;
-    }
-    let denoised;
-    let result = match batch.config {
-        Some(config) => {
-            let Some(model) = nets.denoiser(&config.for_image(size), out) else {
-                return Err(Some(tr().notices.model_not_available.into()));
-            };
-            denoised = with_network_space(model, picture.info.icc.as_deref(), |m| {
-                denoise_core::denoise(&picture.rgb, batch.params, m, progress, control)
-            })
-            .map_err(|e| match e {
-                DenoiseError::Cancelled => None,
-                other => Some(errors::denoise(&other)),
-            })?;
-            &denoised
-        }
-        None => &picture.rgb,
+    let Some(model) = nets.denoiser(&batch.config.for_image(size), out) else {
+        return Err(Some(tr().notices.model_not_available.into()));
     };
-    match export.upscale {
-        None => denoise_io::write(&target, result, alpha, &picture.info, &export.options)
-            .map_err(|e| Some(errors::io(&e)))?,
-        Some(u) => {
-            let model = nets.upscaler(u, batch.upscalers, out).map_err(Some)?;
-            let output = upscaling::Output { path: &target, info: &picture.info, opts: &export.options };
-            let timed = Timed { upscale: u, device: batch.upscalers.engine.device, out };
-            timed.write_enlarged(&output, result, alpha, model, progress, control)?;
-        }
-    }
+    let result = with_network_space(model, picture.info.icc.as_deref(), |m| {
+        denoise_core::denoise(&picture.rgb, batch.params, m, progress, control)
+    })
+    .map_err(|e| match e {
+        DenoiseError::Cancelled => None,
+        other => Some(errors::denoise(&other)),
+    })?;
+    denoise_io::write(&target, &result, picture.alpha.as_deref(), &picture.info, &export.options)
+        .map_err(|e| Some(errors::io(&e)))?;
     Ok(target)
 }
 

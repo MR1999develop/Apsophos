@@ -8,9 +8,7 @@
 //!   neural network seen through the [`TileModel`] trait;
 //! * [`Mixer`] and [`blend`]: how much of the correction to apply, separately
 //!   for luminance (grain) and colour (colour blotches);
-//! * [`denoise`]: the whole procedure in one call;
-//! * [`upscale`]: enlargement by a super-resolution network, in bands, and
-//!   [`resample`], the classical enlargement it is compared with.
+//! * [`denoise`]: the whole procedure in one call.
 //!
 //! SCUNet is a "blind" network: it estimates the noise level by itself. The
 //! network output is therefore computed once, and the parameters only act on
@@ -24,9 +22,7 @@ pub mod num;
 mod params;
 pub mod product;
 pub mod quant;
-pub mod resample;
 mod tiling;
-pub mod upscale;
 
 pub use blend::{blend, blend_region, luma, Mixer};
 pub use error::{DenoiseError, ModelError};

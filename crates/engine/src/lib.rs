@@ -22,16 +22,8 @@
 //!
 //! If the requested GPU cannot be used, the model falls back to the next
 //! back end and finally to the CPU, and [`Scunet::gpu_fallback`] says why.
-//!
-//! The same back ends run the SwinIR upscaling models ([`Upscaler`]).
 
 pub mod gpu_error;
-mod upscaler;
-
-pub use upscaler::{
-    card, upscaler_file_kind, upscaler_files, ModelCard, UpscaleSpeed, Upscaler, UpscalerFile, UpscalerTile,
-    UPSCALE_MARGIN_PX,
-};
 
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -46,6 +38,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use gpu_error::GpuProblem;
+
+/// What the interface says about a model: the network, where it comes
+/// from, its licence and the data it was trained on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelCard {
+    pub network: &'static str,
+    pub source: &'static str,
+    pub licence: &'static str,
+    pub training_data: &'static str,
+}
 
 /// What the interface says about the denoising network: the weights are
 /// KAIR's `scunet_color_real_psnr.pth`, converted to ONNX by
@@ -247,13 +249,11 @@ pub struct ModelFiles {
     pub fp16: Option<PathBuf>,
 }
 
-/// A network loaded on a device, the part the denoiser and the upscaler
-/// share: the session, the tile it takes and where it runs.
+/// A network loaded on a device: the session, the tile it takes and where
+/// it runs.
 struct Network {
     session: Session,
     tile_px: usize,
-    /// Output side over input side: 1 for the denoiser.
-    scale: usize,
     on_gpu: bool,
     device: String,
     gpu_fallback: Option<String>,
@@ -262,25 +262,20 @@ struct Network {
 }
 
 impl Network {
-    /// Loads the model at `path` (input tile `tile_px`, output `scale` times
-    /// larger), on the GPU if requested and possible, else on the CPU.
-    fn load(path: &Path, tile_px: usize, scale: usize, options: &EngineOptions) -> Result<Self, EngineError> {
+    /// Loads the model at `path` (input tile `tile_px`), on the GPU if
+    /// requested and possible, else on the CPU.
+    fn load(path: &Path, tile_px: usize, options: &EngineOptions) -> Result<Self, EngineError> {
         if !path.is_file() {
             return Err(EngineError::Missing(path.display().to_string()));
         }
         let fp16 = fp16_variant(path);
         let files = ModelFiles { fp32: Some(path.to_path_buf()), fp16: fp16.is_file().then_some(fp16) };
-        Self::load_files(&files, tile_px, scale, options)
+        Self::load_files(&files, tile_px, options)
     }
 
     /// As [`Network::load`], from the files of one model: either precision
     /// may be missing. The GPU takes FP16 when there is one, the CPU FP32.
-    fn load_files(
-        files: &ModelFiles,
-        tile_px: usize,
-        scale: usize,
-        options: &EngineOptions,
-    ) -> Result<Self, EngineError> {
+    fn load_files(files: &ModelFiles, tile_px: usize, options: &EngineOptions) -> Result<Self, EngineError> {
         let (fp32, fp16) = (files.fp32.as_deref(), files.fp16.as_deref());
         let Some(any) = fp32.or(fp16) else {
             return Err(EngineError::Missing("model file".into()));
@@ -319,7 +314,6 @@ impl Network {
                     return Ok(Self {
                         session,
                         tile_px,
-                        scale,
                         on_gpu: true,
                         device,
                         gpu_fallback,
@@ -341,7 +335,6 @@ impl Network {
         Ok(Self {
             session,
             tile_px,
-            scale,
             on_gpu: false,
             device: format!("CPU, {threads} threads{precision}"),
             gpu_fallback,
@@ -375,7 +368,7 @@ impl Network {
     fn probe(&mut self) -> Result<(), ModelError> {
         let n = self.tile_px;
         let input = vec![0.5f32; 3 * n * n];
-        let mut output = vec![0.0f32; 3 * n * n * self.scale * self.scale];
+        let mut output = vec![0.0f32; 3 * n * n];
         self.run(&input, &mut output)
     }
 }
@@ -392,7 +385,7 @@ impl Scunet {
     /// # Errors
     /// [`EngineError`] if the file is missing or is not a valid model.
     pub fn load(path: &Path, options: &EngineOptions) -> Result<Self, EngineError> {
-        Network::load(path, tile_px_for(path), 1, options).map(|net| Self { net, profile: None })
+        Network::load(path, tile_px_for(path), options).map(|net| Self { net, profile: None })
     }
 
     /// Loads the model with the tile size best suited to an image of `size`

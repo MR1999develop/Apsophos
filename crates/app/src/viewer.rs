@@ -44,15 +44,7 @@ pub struct ImagePos {
     pub y: f32,
 }
 
-impl ImagePos {
-    /// The pixel at this position in an image of `width × height`, the
-    /// nearest one when the position is outside.
-    pub fn pixel(self, width: usize, height: usize) -> (usize, usize) {
-        (num::floor_to_usize(self.x, width.saturating_sub(1)), num::floor_to_usize(self.y, height.saturating_sub(1)))
-    }
-}
-
-pub fn texture_options() -> TextureOptions {
+fn texture_options() -> TextureOptions {
     TextureOptions {
         // sharp pixels above 100 %, smooth when zoomed out
         magnification: TextureFilter::Nearest,
@@ -175,11 +167,6 @@ impl DisplayCache {
         &self.transform
     }
 
-    /// The display transform, to share with another view of the photo.
-    pub fn shared_transform(&self) -> Arc<DisplayTransform> {
-        Arc::clone(&self.transform)
-    }
-
     fn tile_rect(&self, i: usize) -> PixelRect {
         let (x, y) = ((i % self.cols) * DISPLAY_TILE, (i / self.cols) * DISPLAY_TILE);
         PixelRect::new(x, y, DISPLAY_TILE.min(self.width - x), DISPLAY_TILE.min(self.height - y))
@@ -262,16 +249,6 @@ impl DisplayCache {
         }
         pending
     }
-}
-
-/// `img` as shown on the display, pixel for pixel.
-pub fn color_image(img: &Image, transform: &DisplayTransform) -> ColorImage {
-    let (w, h) = (img.width(), img.height());
-    let mut rgba = vec![0u8; w * h * 4];
-    for (y, out) in rgba.chunks_exact_mut(w.max(1) * 4).enumerate() {
-        transform.row(img.row(y).as_chunks::<3>().0, out);
-    }
-    ColorImage::from_rgba_unmultiplied([w, h], &rgba)
 }
 
 fn thumbnail(img: &Image, transform: &DisplayTransform) -> ColorImage {
@@ -449,16 +426,6 @@ pub struct ViewerInput<'a> {
     pub reduce_motion: bool,
     /// Tile the network is processing, to highlight.
     pub working_on: Option<PixelRect>,
-    /// A click chooses a point (of the enlargement preview) instead of
-    /// moving or zooming the view.
-    pub picking_point: bool,
-    /// The enlarged tiles over the view: their area in the photo and their
-    /// texture, drawn over the result.
-    pub enlarged: &'a [(PixelRect, egui::TextureId)],
-    /// The label of the "after" side when the enlargement is shown.
-    pub after_label: Option<String>,
-    /// What the viewer says about the enlargement, at the bottom left.
-    pub enlarge_note: Option<&'a str>,
 }
 
 /// Name and state of the image area for screen readers: it is drawn by
@@ -478,8 +445,6 @@ fn describe(response: &egui::Response, view: &ViewState, doc: &Document, input: 
         &format::int(doc.done_count()),
         &format::int(doc.plan.len()),
     );
-    // the hint drawn over the photo while a click chooses a point
-    let state = if input.picking_point { format!("{}. {state}", tr().export.preview_picking) } else { state };
     response.ctx.accesskit_node_builder(response.id, |node| node.set_description(state));
 }
 
@@ -488,8 +453,6 @@ pub struct ViewerOutput {
     pub hover: Option<(usize, usize)>,
     /// The image area, which can hold the keyboard focus (F6).
     pub response: egui::Response,
-    /// The point of the photo clicked while choosing one.
-    pub picked: Option<ImagePos>,
 }
 
 /// Draws the image and handles mouse and wheel.
@@ -512,10 +475,8 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         if (factor - 1.0).abs() > 1e-4 {
             view.zoom_by(factor, pos);
         }
-        let near_split = split_on && !input.picking_point && (pos.x - split_x).abs() <= SPLIT_GRAB_PX;
-        if input.picking_point && !response.dragged() {
-            ctx.set_cursor_icon(CursorIcon::Crosshair);
-        } else if near_split || view.dragging_split {
+        let near_split = split_on && (pos.x - split_x).abs() <= SPLIT_GRAB_PX;
+        if near_split || view.dragging_split {
             ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
         } else if response.dragged() {
             ctx.set_cursor_icon(CursorIcon::Grabbing);
@@ -538,13 +499,7 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
     if response.drag_stopped() {
         view.dragging_split = false;
     }
-    // a click while choosing a point picks it; the view can still be dragged
-    let picked = (input.picking_point && response.clicked())
-        .then(|| response.interact_pointer_pos())
-        .flatten()
-        .map(|p| view.to_image(p))
-        .filter(|p| p.x >= 0.0 && p.y >= 0.0 && p.x < size.x && p.y < size.y);
-    if response.double_clicked() && !input.picking_point {
+    if response.double_clicked() {
         if (view.zoom_percent() - 100.0).abs() < 1.0 {
             view.request_fit();
         } else {
@@ -580,10 +535,6 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
                 p.image(tex.id(), view.screen_rect(display.tile_rect(i)), uv, Color32::WHITE);
             }
         }
-        // the enlargement, where it is ready, over the result at its size
-        for &(r, id) in input.enlarged {
-            p.image(id, view.screen_rect(r), uv, Color32::WHITE);
-        }
     }
 
     if let Some(r) = input.working_on {
@@ -594,13 +545,8 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         }
     }
 
-    if input.picking_point {
-        // what a click does now, where the before/after labels stand
-        let at = pos2(canvas.center().x, canvas.top() + SPACE_M);
-        badge(&painter, at, egui::Align2::CENTER_TOP, tr().export.preview_picking, t);
-    } else if split_on {
-        let after = input.after_label.clone().unwrap_or_else(|| input.result_view.label());
-        draw_split(&painter, canvas, split_x, &after, t);
+    if split_on {
+        draw_split(&painter, canvas, split_x, &input.result_view.label(), t);
     } else if input.show_original {
         badge(
             &painter,
@@ -609,10 +555,6 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
             tr().viewer.original,
             t,
         );
-    }
-
-    if let Some(note) = input.enlarge_note {
-        badge(&painter, canvas.left_bottom() + vec2(SPACE_M, -SPACE_M), egui::Align2::LEFT_BOTTOM, note, t);
     }
 
     if let Some(thumb) = &display.thumb {
@@ -631,7 +573,7 @@ pub fn show(ui: &mut egui::Ui, view: &mut ViewState, doc: &mut Document, input: 
         (ip.x >= 0.0 && ip.y >= 0.0 && ip.x < size.x && ip.y < size.y)
             .then_some((num::floor_to_usize(ip.x, usize::MAX), num::floor_to_usize(ip.y, usize::MAX)))
     });
-    ViewerOutput { hover, response, picked }
+    ViewerOutput { hover, response }
 }
 
 /// Small label over the image.
@@ -688,19 +630,5 @@ fn minimap(ui: &mut egui::Ui, view: &mut ViewState, thumb: &TextureHandle, canva
         let rel = (p - rect.min) / size;
         view.anchor = None;
         view.center = ImagePos { x: rel.x.clamp(0.0, 1.0) * view.image.x, y: rel.y.clamp(0.0, 1.0) * view.image.y };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ImagePos;
-
-    #[test]
-    fn a_position_names_a_pixel_of_the_image() {
-        assert_eq!(ImagePos { x: 10.7, y: 3.2 }.pixel(48, 32), (10, 3));
-        // outside: the nearest pixel at the edge
-        assert_eq!(ImagePos { x: 48.0, y: -5.0 }.pixel(48, 32), (47, 0));
-        assert_eq!(ImagePos { x: f32::NAN, y: 1e9 }.pixel(48, 32), (0, 31));
-        assert_eq!(ImagePos { x: 3.0, y: 3.0 }.pixel(0, 0), (0, 0));
     }
 }

@@ -1,6 +1,6 @@
 """Building blocks shared by the ONNX graph builders of Apsophos: a small
 graph builder and the Swin transformer block (window attention, layer
-normalisation, GELU MLP) that both SCUNet and SwinIR use.
+normalisation, GELU MLP) that SCUNet uses.
 
 Only standard ONNX operators (opset 13) are used, so ONNX Runtime and its GPU
 back ends (DirectML, TensorRT for RTX) can run the graphs; layer

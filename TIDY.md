@@ -5,7 +5,7 @@ code changes again. Every item says why it waits. The overall state of the
 work (done, checked, open) is in `claude/status.md`.
 
 Updated on November 2, 2026 (translated into English on November 7; the
-items done on November 9 removed, new ones added).
+items done on November 9 and 10 removed, new ones added).
 
 ## Code
 
@@ -91,36 +91,15 @@ items done on November 9 removed, new ones added).
 - **Settings:** the file is the serialisation of `Settings`; fields a new
   version does not know are lost on saving. To fix if the settings grow.
 
-## Enlargement (November 5)
+## Writing files (November 10)
 
-- **TIFF and JPEG collected, not streamed:** the `tiff` crate compresses
-  only an image written in one go (strips written one at a time come out
-  uncompressed under a Deflate tag), so the converted samples are collected
-  in memory (6 bytes per pixel in 16 bit). When the crate compresses
-  strips, write them in bands; BigTIFF for files over 4 GB (today rejected
-  before the work, with the 16-bit suggestion).
-- **DirectML on slower GPUs:** the small tiles (320 px for 2×, 256 for 4×)
-  stay below the about 2 s Windows grants a submission on a laptop RTX
-  3050; integrated graphics may exceed them and reset the GPU (887A0006).
-  Measure the time of the first pass and, if it is close to the limit,
-  switch to the CPU saying so, or generate even smaller tiles.
-- **The faithful 2× gains little** over Catmull-Rom in the converter's
-  synthetic test (0.04 dB with camera blur; 1.8 dB in the engine test):
-  judge it on real photos with the preview. Alternative: SwinIR "classical"
-  2× (trained on bicubic downscaling), more faithful on sharp images and
-  less on blurred ones.
-- **Proxy:** `ureq` uses only the proxy from the environment variables
-  (`HTTPS_PROXY`), not the one set in Windows; with a corporate proxy the
-  download fails with a message, and the models can be copied by hand into
-  `%LOCALAPPDATA%\Apsophos\models`.
-- **Old temporary files of the download**: versions before November 9 named
-  the partial file `.<name>.<pid>-<n>.part`; one left by a crash stays in
-  the download folder, and nobody removes it.
-- **The time estimate leaves out loading the model** (4–5 s), which the
-  measure does not include.
+- **The writers still take an image in bands** (`BandSource` in
+  `denoise_io`): the bands came from the AI enlargement, removed on
+  November 10; now every file is written from one image in memory, as a
+  single band. Simplify the TIFF, JPEG and PNG writers to take an `Image`
+  when they change again.
 - **The model cards are in English** in the Italian interface (they come
-  from the engine), and the card does not tell the faithful model from the
-  generated-detail one (`card()` depends only on the factor).
+  from the engine).
 
 ## Interface (November 9)
 

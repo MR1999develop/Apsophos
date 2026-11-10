@@ -110,81 +110,6 @@ fn file_menu_disables_export_without_an_image() {
 }
 
 #[test]
-fn export_settings_offer_the_enlargement() {
-    let mut h = harness();
-    h.state_mut().windows.export = true;
-    h.run_steps(3);
-    let te = &tr().export;
-    // "none" is always there; 2Ã— and 4Ã— are there, enabled or not as the
-    // models on this computer allow
-    // (the right panel has its own "4×": the window's are radio buttons)
-    for label in [te.upscale_none, te.upscale_x2, te.upscale_x4] {
-        h.get_by_role_and_label(Role::RadioButton, label);
-    }
-    assert!(h.state().settings.export.upscale.is_none());
-    assert_eq!(h.state().settings.export.full_suffix(), "_dn");
-}
-
-#[test]
-fn right_panel_chooses_the_enlargement() {
-    let mut h = harness();
-    let tx = &tr().params;
-    let factor = |h: &Harness<'_, ApsophosApp>, label: &'static str| {
-        h.get_by(move |n| n.label().is_some_and(|l| l == label) && n.role() != Role::Label)
-            .accesskit_node()
-            .is_disabled()
-    };
-    // no model on disk: the factors are disabled, "none" is chosen
-    h.state_mut().upscaler_files = Some(Vec::new());
-    h.run_steps(3);
-    h.get_by_label(tx.enlarge);
-    assert!(factor(&h, tx.enlarge_x2));
-    assert!(factor(&h, tx.enlarge_x4));
-    assert!(h.state().settings.export.upscale.is_none());
-    // with the faithful 2× model the choice is the export setting
-    h.state_mut().upscaler_files = Some(vec![PathBuf::from("swinir_real_x2_psnr_320_fp16.onnx")]);
-    h.run_steps(3);
-    assert!(!factor(&h, tx.enlarge_x2));
-    assert!(factor(&h, tx.enlarge_x4));
-    h.get_by(|n| n.label().is_some_and(|l| l == tr().params.enlarge_x2) && n.role() != Role::Label).click();
-    h.run_steps(3);
-    let chosen = h.state().settings.export.upscale.map(|u| (u.factor.value(), u.detail));
-    assert_eq!(chosen, Some((2, denoise_core::upscale::Detail::Faithful)));
-    h.get_by_label(tx.enlarge_none).click();
-    h.run_steps(3);
-    assert!(h.state().settings.export.upscale.is_none());
-}
-
-#[test]
-fn noise_reduction_switches_off_on_its_own() {
-    let mut h = harness();
-    let dir = tempfile::tempdir().unwrap();
-    open_dropped(&mut h, sample_png(dir.path(), "plain.png"));
-    let tx = &tr().params;
-    assert!(!h.get_by_label(tx.grain).accesskit_node().is_disabled());
-    h.get_by_label(tx.reduce_noise).click();
-    h.run_steps(3);
-    let app = h.state();
-    assert!(!app.settings.export.reduce_noise);
-    // the photo is ready as it is, with nothing to wait for
-    assert!(app.ready_doc().is_some(), "the photo waits for a noise reduction switched off");
-    assert_eq!(app.applied_params(), denoise_core::Params::NONE);
-    assert!(h.get_by_label(tx.grain).accesskit_node().is_disabled());
-    // the big button exports instead of denoising
-    assert!(h.query_by_role_and_label(Role::Button, tx.denoise).is_none());
-    // neither step chosen: nothing is written
-    h.state_mut().export();
-    h.run_steps(3);
-    assert_eq!(h.state().hint.as_deref(), Some(tr().toolbar.why.nothing_to_do));
-    assert!(!h.state().exporting);
-    // and the noise reduction is not started behind the user's back
-    h.state_mut().start_denoise();
-    h.run_steps(3);
-    assert!(!h.state().is_running());
-    assert_eq!(h.state().hint.as_deref(), Some(tr().toolbar.why.noise_off));
-}
-
-#[test]
 fn menu_closes_after_a_command() {
     let mut h = harness();
     h.get_by_role_and_label(Role::Button, tr().menu.view).click();
@@ -294,51 +219,6 @@ fn queue_context_menu_opens_an_item() {
 }
 
 #[test]
-fn a_click_chooses_the_point_of_the_enlargement_preview() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut h = harness();
-    open_dropped(&mut h, sample_png(dir.path(), "point.png"));
-    let te = &tr().export;
-    h.state_mut().windows.upscale_preview = true;
-    h.run_steps(3);
-    // not denoised: the button says why it cannot be used
-    assert!(h.get_by_label(te.preview_pick).accesskit_node().is_disabled());
-    // choosing (as the button does once the photo is denoised), then Esc
-    let name = (tr().viewer.a11y_name)("point.png");
-    // the hint over the photo, as a screen reader hears it
-    let hint = |h: &Harness<'_, ApsophosApp>| {
-        let photo = h.get_by_role_and_label(Role::Image, &name);
-        photo.accesskit_node().description().is_some_and(|d| d.starts_with(te.preview_picking))
-    };
-    h.state_mut().pick_preview_point();
-    h.run_steps(3);
-    assert!(hint(&h));
-    h.key_press(Key::Escape);
-    h.run_steps(3);
-    assert!(!h.state().picking_preview_point && !hint(&h));
-    // choosing again, then a click on the photo: that point, and the choice
-    // ends; the small photo is zoomed in to fill the view
-    h.state_mut().settings.reduce_motion = true;
-    h.state_mut().view.set_zoom_percent(2000.0);
-    h.state_mut().pick_preview_point();
-    h.run_steps(3);
-    let photo = h.get_by_role_and_label(Role::Image, &name).rect();
-    // right of the centre, clear of the preview window in the middle
-    let at = photo.center() + egui::vec2(photo.width() * 0.4, 0.0);
-    h.hover_at(at);
-    h.run_steps(1);
-    h.drag_at(at);
-    h.run_steps(1);
-    h.drop_at(at);
-    h.run_steps(3);
-    let state = h.state();
-    assert!(!state.picking_preview_point);
-    let (x, y) = state.preview_point.expect("a point was chosen").pixel(48, 32);
-    // right of the centre of the 48 × 32 px photo, at its height
-    assert!(x > 24 && (14..=17).contains(&y), "({x}, {y})");
-}
-
-#[test]
 fn the_about_window_lists_the_models() {
     let mut h = harness();
     h.state_mut().windows.about = true;
@@ -349,7 +229,7 @@ fn the_about_window_lists_the_models() {
     h.run_steps(3);
     h.get_by_label(denoiser.network);
     h.get_by_label(denoiser.source);
-    assert_eq!(h.get_all_by_label(tr().about.model_files).count(), 3, "denoising, 2× and 4×");
+    assert_eq!(h.get_all_by_label(tr().about.model_files).count(), 1);
     // closing the window forgets the files read, so the next opening reads them again
     assert!(h.state().model_list.is_some());
     h.state_mut().windows.about = false;
@@ -449,86 +329,4 @@ fn screenshot() {
     let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/screenshots");
     std::fs::create_dir_all(&out).unwrap();
     image.save(out.join("window.png")).unwrap();
-}
-
-/// The enlargement of the area in view, with the real networks: opens a
-/// photo, denoises it, chooses 2× and waits for the view to be enlarged;
-/// the window goes to `target/screenshots/enlarged.png`. Not run by
-/// default: it needs a GPU and the models.
-#[test]
-#[ignore = "needs a GPU and the models; run by hand to look at the enlargement"]
-fn enlarged_view_screenshot() {
-    enlarge_the_view(true, "enlarged.png");
-}
-
-/// The same with the noise reduction off: the photo is enlarged as it is,
-/// without being denoised first (`target/screenshots/enlarged-only.png`).
-#[test]
-#[ignore = "needs a GPU and the models; run by hand to look at the enlargement"]
-fn enlarged_view_without_noise_reduction() {
-    enlarge_the_view(false, "enlarged-only.png");
-}
-
-fn enlarge_the_view(reduce_noise: bool, screenshot: &str) {
-    use crate::enlarged_view::Status;
-    use denoise_core::upscale::{Detail, Factor, Upscale};
-    let dir = tempfile::tempdir().unwrap();
-    let (w, h) = (640, 480);
-    // fine stripes and a little noise: detail the enlargement can show
-    let data = (0..w * h)
-        .flat_map(|i| {
-            let (x, y) = ((i % w) as f32, (i / w) as f32);
-            let wave = 0.5 + 0.4 * ((x * 0.35).sin() * (y * 0.07).cos());
-            let noise = ((i * 2_654_435_761) % 1000) as f32 / 1000.0 * 0.08;
-            [wave + noise, 0.45 + noise, 1.0 - wave + noise]
-        })
-        .collect();
-    let img = Image::from_rgb(w, h, data).unwrap();
-    let info = SourceInfo {
-        format: FileFormat::Png,
-        bit_depth: BitDepth::U8,
-        gray: false,
-        icc: None,
-        exif: None,
-        xmp: None,
-        xmp_extended: None,
-        dpi: None,
-        notes: vec![],
-        jpeg_quality: None,
-    };
-    let path = dir.path().join("stripes.png");
-    denoise_io::write(&path, &img, None, &info, &ExportOptions::default()).unwrap();
-
-    let mut h = Harness::builder().with_size(SIZE).wgpu().build_eframe(|cc| ApsophosApp::new(cc, Vec::new()));
-    open_dropped(&mut h, path);
-    h.state_mut().settings.export.upscale = Some(Upscale { factor: Factor::X2, detail: Detail::Faithful });
-    h.state_mut().set_reduce_noise(reduce_noise);
-    if reduce_noise {
-        h.state_mut().start_denoise();
-    }
-    let wait = |h: &mut Harness<'_, ApsophosApp>, what: &str, done: &dyn Fn(&ApsophosApp) -> bool| {
-        let start = Instant::now();
-        while !done(h.state()) {
-            assert!(start.elapsed() < Duration::from_secs(300), "timed out waiting for {what}");
-            h.step();
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    };
-    if reduce_noise {
-        wait(&mut h, "the noise reduction", &|app| app.doc.as_ref().is_some_and(|d| d.is_complete()));
-    }
-    h.state_mut().view.set_zoom_percent(200.0);
-    h.run_steps(20);
-    wait(&mut h, "the enlargement to start", &|app| app.enlarged.status() == Status::Working);
-    wait(&mut h, "the enlargement of the view", &|app| app.enlarged.status() == Status::Ready);
-    h.run_steps(4);
-    assert_eq!(h.state().enlarged.upscale().map(|u| u.factor), Some(Factor::X2));
-    let area = h.state().view.visible_pixels();
-    assert!(!h.state_mut().enlarged.shown(area).is_empty(), "the view shows enlarged tiles");
-    let denoised = h.state().doc.as_ref().map_or(0, |d| d.done_count());
-    assert_eq!(denoised > 0, reduce_noise, "the noise reduction ran only if switched on");
-    let image = h.render().unwrap();
-    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/screenshots");
-    std::fs::create_dir_all(&out).unwrap();
-    image.save(out.join(screenshot)).unwrap();
 }

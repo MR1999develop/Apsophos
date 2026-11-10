@@ -8,14 +8,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use denoise_core::{product, Image, JobControl, Params, PixelRect};
+use denoise_core::{product, JobControl, Params, PixelRect};
 use denoise_engine::{Device, TileProfile};
 use denoise_io::{ExportOptions, FileFormat};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 
 use crate::document::Document;
-use crate::download;
-use crate::enlarged_view::{self, EnlargedView, Step};
 use crate::errors;
 use crate::format::{self, file_name};
 use crate::history::History;
@@ -23,8 +21,8 @@ use crate::logging;
 use crate::settings::{Destination, Settings, TileHint, STORAGE_KEY};
 use crate::text::{self, tr};
 use crate::theme::{self, Tokens};
-use crate::viewer::{ImagePos, ResultView, ViewState};
-use crate::worker::{Command, ExportJob, ItemStatus, ModelConfig, Msg, UpscaleModels, Worker};
+use crate::viewer::{ResultView, ViewState};
+use crate::worker::{Command, ExportJob, ItemStatus, ModelConfig, Msg, Worker};
 
 const fn shortcut(command: bool, shift: bool, key: Key) -> KeyboardShortcut {
     KeyboardShortcut::new(Modifiers { alt: false, ctrl: false, shift, mac_cmd: false, command }, key)
@@ -98,40 +96,6 @@ pub struct QueueItem {
     pub status: ItemStatus,
 }
 
-/// The before/after preview of the enlargement.
-#[derive(Default)]
-pub enum UpscalePreview {
-    #[default]
-    None,
-    Computing,
-    Ready {
-        upscale: denoise_core::upscale::Upscale,
-        preview: crate::upscaling::Preview,
-        /// Made by the window on its first frame.
-        textures: Option<(egui::TextureHandle, egui::TextureHandle)>,
-        /// Where the divider stands, 0..=1 of the width (Catmull-Rom on the left).
-        split: f32,
-    },
-    Failed(String),
-}
-
-/// A download of upscaling models, asked for by the user.
-pub struct DownloadRun {
-    pub control: Arc<JobControl>,
-    /// Bytes done and in all.
-    pub done: u64,
-    pub total: u64,
-}
-
-/// An enlarged export of the open image, running on the model thread.
-pub struct UpscaleRun {
-    pub control: Arc<JobControl>,
-    pub started: Instant,
-    /// Tiles done and in all (0 of 0 while the model loads).
-    pub done: usize,
-    pub total: usize,
-}
-
 pub struct QueueRun {
     pub control: Arc<JobControl>,
     pub started: Instant,
@@ -171,10 +135,6 @@ pub enum NoticeAction {
     ChooseModel,
     RetryFailed,
     RestoreQueue,
-    /// Downloads the faithful upscaling models.
-    DownloadUpscalers,
-    /// Never offers the upscaling models at start again.
-    NoUpscalerOffer,
 }
 
 impl NoticeAction {
@@ -186,8 +146,6 @@ impl NoticeAction {
             NoticeAction::ChooseModel => n.choose_model,
             NoticeAction::RetryFailed => n.retry_failed,
             NoticeAction::RestoreQueue => n.restore,
-            NoticeAction::DownloadUpscalers => n.download_models,
-            NoticeAction::NoUpscalerOffer => n.no_offer,
         }
     }
 }
@@ -203,7 +161,6 @@ pub struct Notice {
 pub struct Windows {
     pub preferences: bool,
     pub export: bool,
-    pub upscale_preview: bool,
     pub shortcuts: bool,
     pub about: bool,
 }
@@ -246,13 +203,6 @@ pub struct ApsophosApp {
     pub windows: Windows,
     pending_export: Option<PendingExport>,
     pub exporting: bool,
-    /// Set while an enlarged export runs (with `exporting`).
-    pub upscaling: Option<UpscaleRun>,
-    pub preview: UpscalePreview,
-    /// The upscaling models on disk, read once and again when the export
-    /// settings open or a download ends (never on every frame).
-    pub upscaler_files: Option<Vec<PathBuf>>,
-    pub download: Option<DownloadRun>,
     /// Folders being read for the queue.
     pub scanning: usize,
     pub hover: Option<(usize, usize)>,
@@ -266,15 +216,6 @@ pub struct ApsophosApp {
     pub panes: crate::ui::PaneTargets,
     /// The networks and their files, read when the About window opens.
     pub model_list: Option<Vec<crate::model_list::ListedModel>>,
-    /// A click on the photo will choose the point of the enlargement preview.
-    pub picking_preview_point: bool,
-    /// Where the last enlargement preview was asked for; `None`: the centre
-    /// of the view.
-    pub preview_point: Option<ImagePos>,
-    /// The enlargement of the area in view, drawn by the viewer.
-    pub enlarged: EnlargedView<egui::TextureHandle>,
-    /// Stops the request of the viewer's enlargement in flight.
-    enlarge_control: Option<Arc<JobControl>>,
 }
 
 impl ApsophosApp {
@@ -306,10 +247,6 @@ impl ApsophosApp {
             windows: Windows::default(),
             pending_export: None,
             exporting: false,
-            upscaling: None,
-            preview: UpscalePreview::None,
-            upscaler_files: None,
-            download: None,
             scanning: 0,
             hover: None,
             show_original: false,
@@ -318,72 +255,13 @@ impl ApsophosApp {
             title: String::new(),
             panes: crate::ui::PaneTargets::default(),
             model_list: None,
-            picking_preview_point: false,
-            preview_point: None,
-            enlarged: EnlargedView::default(),
-            enlarge_control: None,
         };
-        app.offer_upscalers();
         match files.as_slice() {
             [] => {}
             [one] if one.is_file() => app.open_path(one.clone()),
             _ => app.add_to_queue(files),
         }
         app
-    }
-
-    /// At start, when no upscaling model is installed: a notice that says
-    /// what they are for and offers the button that downloads them (nothing
-    /// is downloaded without it), and one to stop offering them.
-    fn offer_upscalers(&mut self) {
-        if self.settings.no_upscaler_offer
-            || !download::none_installed(download::Pack::Faithful, &self.settings.upscaler_files())
-        {
-            return;
-        }
-        let size = format::bytes(download::pack_bytes(download::Pack::Faithful));
-        let actions = vec![NoticeAction::DownloadUpscalers, NoticeAction::NoUpscalerOffer];
-        self.notify(NoticeKind::Info, (tr().notices.upscalers_offer)(&size), actions);
-    }
-
-    /// The upscaling model files on disk, read the first time after a
-    /// change (see [`Self::upscaler_files`]).
-    pub fn upscaler_files_now(&mut self) -> Vec<PathBuf> {
-        self.upscaler_files.get_or_insert_with(|| self.settings.upscaler_files()).clone()
-    }
-
-    /// Opens the export settings, reading the model files again (they may
-    /// have been copied by hand).
-    pub fn open_export_settings(&mut self) {
-        self.windows.export = true;
-        self.upscaler_files = None;
-    }
-
-    /// Downloads the models of `pack` that are missing, in the background.
-    pub fn start_download(&mut self, pack: download::Pack) {
-        if self.download.is_some() {
-            return;
-        }
-        let entries = download::missing(pack, &self.settings.upscaler_files());
-        if entries.is_empty() {
-            self.notify(NoticeKind::Success, tr().notices.models_present, vec![]);
-            return;
-        }
-        let Some(dir) = download::download_dir() else {
-            let why = tr().errors.not_found;
-            self.notify(NoticeKind::Error, (tr().notices.download_failed)(why), vec![]);
-            return;
-        };
-        let control = Arc::new(JobControl::default());
-        let total = entries.iter().map(|e| e.size).sum();
-        self.download = Some(DownloadRun { control: Arc::clone(&control), done: 0, total });
-        self.worker.download(entries, dir, control);
-    }
-
-    pub fn cancel_download(&mut self) {
-        if let Some(run) = &self.download {
-            run.control.cancel();
-        }
     }
 
     /// `sc` if it is a single-key shortcut that is turned on, for showing
@@ -437,7 +315,6 @@ impl ApsophosApp {
         self.doc = None;
         self.pending_export = None;
         self.hover = None;
-        self.picking_preview_point = false;
     }
 
     // --------------------------------------------------------- processing
@@ -472,10 +349,6 @@ impl ApsophosApp {
     fn start_denoise_with(&mut self, accept_loaded: bool) {
         self.hint = None;
         if self.is_running() {
-            return;
-        }
-        if !self.settings.export.reduce_noise {
-            self.hint = Some(tr().toolbar.why.noise_off.into());
             return;
         }
         if let Some(why) = format::denoise_blocker(self.queue_running(), self.doc.is_some(), &shortcut_text(&SC_OPEN)) {
@@ -536,8 +409,6 @@ impl ApsophosApp {
     /// Esc / Stop: stops whatever is running.
     pub fn stop_all(&mut self) {
         self.cancel_denoise();
-        self.cancel_export();
-        self.cancel_download();
         if let Some(run) = &self.queue.running {
             run.control.cancel();
         }
@@ -555,138 +426,9 @@ impl ApsophosApp {
 
     // ------------------------------------------------------------ export
 
-    /// Stops an enlarged export: no file is written.
-    pub fn cancel_export(&mut self) {
-        if let Some(run) = &self.upscaling {
-            run.control.cancel();
-        }
-    }
-
-    /// Enlarges the export's tile at `point`, or at the centre of the view
-    /// when `None`, for the before/after preview (the photo must be
-    /// denoised: the preview shows it as it will be exported).
-    pub fn preview_upscale(&mut self, point: Option<ImagePos>) {
-        self.picking_preview_point = false;
-        self.preview_point = point;
-        let Some(upscale) = self.settings.export.upscale else { return };
-        let models = self.upscale_models();
-        let Some(doc) = self.ready_doc() else { return };
-        let at = point.unwrap_or_else(|| self.view.center()).pixel(doc.width(), doc.height());
-        let (doc_id, job) = (doc.id, self.look_job(doc));
-        self.preview = UpscalePreview::Computing;
-        self.windows.upscale_preview = true;
-        self.worker.send(Command::PreviewUpscale { doc_id, job, at, upscale, models });
-    }
-
-    /// The open photo with the current sliders and export options, for an
-    /// enlargement that is looked at (preview and view), not written.
-    fn look_job(&self, doc: &Document) -> ExportJob {
-        ExportJob {
-            path: doc.path.clone(),
-            original: Arc::clone(&doc.original),
-            raw: Arc::clone(&doc.raw),
-            alpha: None,
-            info: Arc::clone(&doc.info),
-            params: self.applied_params(),
-            options: self.settings.export.options,
-        }
-    }
-
-    /// What the photo is processed with: the sliders, or no correction when
-    /// the noise reduction is off (the result is then the original).
-    pub fn applied_params(&self) -> Params {
-        if self.settings.export.reduce_noise {
-            self.settings.params
-        } else {
-            Params::NONE
-        }
-    }
-
-    /// The open photo if it can be enlarged or exported now: denoised, or
-    /// taken as it is when the noise reduction is off.
-    pub fn ready_doc(&self) -> Option<&Document> {
-        let reduce = self.settings.export.reduce_noise;
-        self.doc.as_ref().filter(|d| !reduce || d.is_complete())
-    }
-
-    /// Switches the noise reduction on or off; off, the one running stops:
-    /// the enlargement then starts from the photo as it is.
-    pub fn set_reduce_noise(&mut self, on: bool) {
-        self.settings.export.reduce_noise = on;
-        if !on {
-            self.cancel_denoise();
-            self.denoise_waiting = false;
-        }
-    }
-
-    /// What the viewer's enlargement depends on, if it should be shown: a
-    /// factor chosen whose model is on disk, and a photo ready for it.
-    fn enlarge_key(&mut self) -> Option<enlarged_view::Key> {
-        let upscale = self.settings.export.upscale?;
-        if denoise_engine::upscaler_files(&self.upscaler_files_now(), upscale).is_empty() {
-            return None;
-        }
-        let doc = self.ready_doc()?;
-        Some(enlarged_view::Key { doc_id: doc.id, upscale, params: self.applied_params() })
-    }
-
-    /// Asks the worker for the enlargement of the area in view once the view
-    /// stands still, and stops what is no longer wanted.
-    fn drive_enlarged_view(&mut self, ctx: &egui::Context) {
-        let want = self.enlarge_key();
-        // another job has the network thread, or the view shows no result
-        let paused = self.exporting
-            || self.is_running()
-            || self.queue_running()
-            || self.show_original
-            || self.result_view != ResultView::Denoised;
-        let area = self.view.visible_pixels();
-        match self.enlarged.frame(want, paused, area, Instant::now()) {
-            Step::Nothing => {}
-            Step::Wait(after) => ctx.request_repaint_after(after),
-            Step::Cancel => {
-                self.stop_view_enlargement();
-                ctx.request_repaint();
-            }
-            Step::Request { request, area, have } => {
-                self.stop_view_enlargement();
-                let (Some(key), Some(doc)) = (want, self.doc.as_ref()) else { return };
-                let control = Arc::new(JobControl::default());
-                self.enlarge_control = Some(Arc::clone(&control));
-                let (doc_id, job, models) = (doc.id, self.look_job(doc), self.upscale_models());
-                let upscale = key.upscale;
-                self.worker.send(Command::EnlargeView { doc_id, request, job, upscale, models, area, have, control });
-            }
-        }
-    }
-
-    fn stop_view_enlargement(&mut self) {
-        if let Some(control) = self.enlarge_control.take() {
-            control.cancel();
-        }
-    }
-
-    /// An enlarged tile for the viewer, made into a texture in the photo's
-    /// display colours if it is still wanted.
-    fn accept_view_tile(&mut self, ctx: &egui::Context, request: u64, index: usize, rect: PixelRect, pixels: &Image) {
-        if !self.enlarged.wants(request) {
-            return;
-        }
-        let Some(doc) = self.doc.as_ref() else { return };
-        let image = crate::viewer::color_image(pixels, doc.display.transform());
-        let texture = ctx.load_texture(format!("enlarged-{index}"), image, crate::viewer::texture_options());
-        self.enlarged.accept(request, index, rect, texture, pixels.width() * pixels.height());
-    }
-
-    /// The next click on the photo chooses where the enlargement preview is
-    /// taken (Esc cancels).
-    pub fn pick_preview_point(&mut self) {
-        self.picking_preview_point = self.doc.is_some();
-    }
-
-    /// The upscaling models and the device, for the worker.
-    fn upscale_models(&self) -> UpscaleModels {
-        UpscaleModels { files: self.settings.upscaler_files(), engine: self.settings.engine }
+    /// Opens the export settings.
+    pub fn open_export_settings(&mut self) {
+        self.windows.export = true;
     }
 
     /// Exports with the last settings into the remembered folder (Ctrl+E).
@@ -703,12 +445,6 @@ impl ApsophosApp {
         if self.exporting {
             return;
         }
-        if !self.settings.export.changes_the_photo() {
-            self.hint = Some(tr().toolbar.why.nothing_to_do.into());
-            return;
-        }
-        // without noise reduction the photo is exported as it is
-        let complete = complete || !self.settings.export.reduce_noise;
         if !complete {
             self.pending_export = Some(match target {
                 Some((p, o)) => PendingExport::To(p, o),
@@ -725,20 +461,12 @@ impl ApsophosApp {
             }
             return;
         }
-        let upscale = self.settings.export.upscale;
-        let models = upscale.map(|_| self.upscale_models());
-        if let (Some(u), Some(m)) = (upscale, &models) {
-            if denoise_engine::upscaler_files(&m.files, u).is_empty() {
-                self.hint = Some(tr().export.upscale_missing.into());
-                return;
-            }
-        }
         let Some(doc) = &self.doc else { return };
         let export = &self.settings.export;
         let (path, options) = target.unwrap_or_else(|| {
             let (format, _) = denoise_io::resolve(&doc.info, &export.options);
             let dir = export.dir_for(&doc.path);
-            (denoise_io::output_path(&doc.path, &dir, &export.full_suffix(), format.extension()), export.options)
+            (denoise_io::output_path(&doc.path, &dir, &export.suffix, format.extension()), export.options)
         });
         let job = ExportJob {
             path,
@@ -746,19 +474,11 @@ impl ApsophosApp {
             raw: Arc::clone(&doc.raw),
             alpha: doc.alpha.clone(),
             info: Arc::clone(&doc.info),
-            params: self.applied_params(),
+            params: self.settings.params,
             options,
         };
         self.exporting = true;
-        match (upscale, models) {
-            (Some(upscale), Some(models)) => {
-                let control = Arc::new(JobControl::default());
-                self.upscaling =
-                    Some(UpscaleRun { control: Arc::clone(&control), started: Instant::now(), done: 0, total: 0 });
-                self.worker.send(Command::ExportUpscaled { job, upscale, models, control });
-            }
-            _ => self.worker.export(job),
-        }
+        self.worker.export(job);
     }
 
     /// Exports choosing name, folder and format (Ctrl+Shift+E).
@@ -770,7 +490,7 @@ impl ApsophosApp {
         let export = &self.settings.export;
         let (format, _) = denoise_io::resolve(&doc.info, &export.options);
         let dir = export.dir_for(&doc.path);
-        let suggested = denoise_io::output_path(&doc.path, &dir, &export.full_suffix(), format.extension());
+        let suggested = denoise_io::output_path(&doc.path, &dir, &export.suffix, format.extension());
         let mut dlg = rfd::FileDialog::new()
             .set_title(tr().dialogs.export_image)
             .set_directory(&dir)
@@ -853,27 +573,15 @@ impl ApsophosApp {
         if items.is_empty() {
             return;
         }
-        if !self.settings.export.changes_the_photo() {
-            self.hint = Some(tr().toolbar.why.nothing_to_do.into());
-            return;
-        }
-        // the denoiser is needed only when the noise is reduced
-        let model = if self.settings.export.reduce_noise {
-            let Some(model) = self.model_config() else { return };
-            Some(model)
-        } else {
-            None
-        };
+        let Some(model) = self.model_config() else { return };
         for (n, _) in &items {
             self.queue.items[*n].status = ItemStatus::Queued;
         }
         let control = Arc::new(JobControl::default());
         self.queue.running =
             Some(QueueRun { control: Arc::clone(&control), started: Instant::now(), total: items.len() });
-        let upscalers = self.upscale_models();
         self.worker.send(Command::Batch {
             model,
-            upscalers,
             items,
             params: self.settings.params,
             export: self.settings.export.clone(),
@@ -967,8 +675,6 @@ impl ApsophosApp {
             NoticeAction::Reveal(p) => Self::reveal(&p),
             NoticeAction::ChooseModel => self.choose_model(),
             NoticeAction::RetryFailed => self.start_queue(),
-            NoticeAction::DownloadUpscalers => self.start_download(download::Pack::Faithful),
-            NoticeAction::NoUpscalerOffer => self.settings.no_upscaler_offer = true,
             NoticeAction::RestoreQueue => {
                 if let Some(mut items) = self.queue.cleared.take() {
                     items.append(&mut self.queue.items);
@@ -1081,58 +787,8 @@ impl ApsophosApp {
                     }
                 }
             }
-            Msg::UpscalerReady { device, gpu_fallback } => {
-                tracing::info!("upscaler on {device}");
-                // never a silent fallback: the CPU is many times slower
-                if let Some(why) = gpu_fallback.filter(|_| self.settings.engine.device != Device::Cpu) {
-                    self.notify(NoticeKind::Info, (tr().notices.upscaler_on_cpu)(&errors::gpu(&why)), vec![]);
-                }
-            }
-            Msg::UpscalePreview { doc_id, upscale, result } => {
-                if self.doc.as_ref().is_some_and(|d| d.id == doc_id) {
-                    self.preview = match result {
-                        Ok(preview) => UpscalePreview::Ready { upscale, preview, textures: None, split: 0.5 },
-                        Err(e) => UpscalePreview::Failed(e),
-                    };
-                }
-            }
-            // made into textures in `logic`, which has the context
-            Msg::ViewTile { .. } => {}
-            Msg::ViewEnlarged { request, result } => {
-                if let Some(why) = self.enlarged.finished(request, result) {
-                    self.notify(NoticeKind::Error, (tr().notices.view_enlarge_failed)(&why), vec![]);
-                }
-            }
-            Msg::DownloadProgress { done, total } => {
-                if let Some(run) = &mut self.download {
-                    (run.done, run.total) = (done, total);
-                }
-            }
-            Msg::Downloaded(result) => {
-                self.download = None;
-                // read the model folders again: the choices change
-                self.upscaler_files = None;
-                match result {
-                    Ok(()) => self.notify(NoticeKind::Success, tr().notices.models_downloaded, vec![]),
-                    Err(None) => self.notify(NoticeKind::Info, tr().notices.download_cancelled, vec![]),
-                    Err(Some(e)) => self.notify(
-                        NoticeKind::Error,
-                        (tr().notices.download_failed)(&e),
-                        vec![NoticeAction::DownloadUpscalers],
-                    ),
-                }
-            }
-            Msg::UpscaleMeasured { upscale, device, speed } => {
-                self.settings.remember_upscale_speed(upscale, device, speed);
-            }
-            Msg::ExportProgress { done, total } => {
-                if let Some(run) = &mut self.upscaling {
-                    (run.done, run.total) = (done, total);
-                }
-            }
             Msg::Exported(result) => {
                 self.exporting = false;
-                self.upscaling = None;
                 self.hint = None;
                 match result {
                     Ok(path) => self.notify(
@@ -1140,8 +796,7 @@ impl ApsophosApp {
                         (tr().notices.exported)(&file_name(&path)),
                         vec![NoticeAction::Reveal(path)],
                     ),
-                    Err(None) => self.notify(NoticeKind::Info, tr().notices.export_cancelled, vec![]),
-                    Err(Some(e)) => self.notify(NoticeKind::Error, (tr().notices.export_failed)(&e), vec![]),
+                    Err(e) => self.notify(NoticeKind::Error, (tr().notices.export_failed)(&e), vec![]),
                 }
             }
             Msg::BatchItem { index, status } => {
@@ -1161,7 +816,6 @@ impl ApsophosApp {
                 self.denoise_waiting = false;
                 self.queue.running = None;
                 self.exporting = false;
-                self.upscaling = None;
                 self.opening = None;
                 self.notify(NoticeKind::Error, (tr().notices.internal_error)(&e), vec![]);
             }
@@ -1278,12 +932,7 @@ impl ApsophosApp {
             self.view.zoom_by(1.0 / ZOOM_STEP, center);
         }
         if escape {
-            // Esc leaves the choice of a point first, then stops the work
-            if self.picking_preview_point {
-                self.picking_preview_point = false;
-            } else {
-                self.stop_all();
-            }
+            self.stop_all();
         }
         if noise && self.doc.is_some() {
             self.toggle_removed_noise();
@@ -1332,17 +981,11 @@ impl eframe::App for ApsophosApp {
     /// changes the state before the frame is drawn.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for msg in self.worker.drain() {
-            match msg {
-                Msg::ViewTile { request, index, rect, pixels } => {
-                    self.accept_view_tile(ctx, request, index, rect, &pixels);
-                }
-                other => self.on_message(other),
-            }
+            self.on_message(msg);
         }
         self.handle_shortcuts(ctx);
         self.handle_drops(ctx);
         self.update_title(ctx);
-        self.drive_enlarged_view(ctx);
         // while processing, the time estimate changes even without messages
         if self.is_running() || self.queue_running() {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));

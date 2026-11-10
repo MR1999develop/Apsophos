@@ -162,10 +162,6 @@ pub struct Why {
     pub no_gpu_build: &'static str,
     pub queue_not_running: &'static str,
     pub no_files_to_process: &'static str,
-    /// Denoise with the noise reduction switched off.
-    pub noise_off: &'static str,
-    /// Export or the queue with neither noise reduction nor enlargement.
-    pub nothing_to_do: &'static str,
     pub wait_for_denoising: &'static str,
     pub wait_for_queue: &'static str,
     pub wait_for_processing: &'static str,
@@ -192,9 +188,6 @@ pub struct Toolbar {
 pub struct ParamsTexts {
     pub title: &'static str,
     pub intro: &'static str,
-    /// The switch of the noise reduction, independent of the enlargement.
-    pub reduce_noise: &'static str,
-    pub reduce_noise_tip: &'static str,
     pub preset: &'static str,
     pub light: &'static str,
     pub light_tip: &'static str,
@@ -217,26 +210,10 @@ pub struct ParamsTexts {
     pub export_as: &'static str,
     pub export_settings: &'static str,
     pub sliders_live: &'static str,
-    /// The enlargement in the right panel, a shortcut to the export setting.
-    pub enlarge: &'static str,
-    pub enlarge_none: &'static str,
-    pub enlarge_x2: &'static str,
-    pub enlarge_x4: &'static str,
-    pub enlarge_tip: &'static str,
-    /// Under the choice: when it acts.
-    pub enlarge_when: &'static str,
-    /// A disabled factor: no model on disk.
-    pub enlarge_missing: &'static str,
-    /// Opens the export settings at the enlargement.
-    pub enlarge_options: &'static str,
     pub denoise: &'static str,
     pub finish_denoising: &'static str,
     pub denoise_tip: fn(&str) -> String,
     pub exporting: &'static str,
-    /// `Export 2×`, from the factor.
-    pub export_enlarged: fn(&str) -> String,
-    pub enlarging: &'static str,
-    pub cancel_export: &'static str,
     /// `Tile 3 of 12`, from the numbers already formatted.
     pub tile_of: fn(&str, &str) -> String,
     pub advanced: &'static str,
@@ -346,8 +323,6 @@ pub struct Status {
     pub loading_model: &'static str,
     /// `Tile 3/12`.
     pub tile: fn(usize, usize) -> String,
-    /// `Download 12 MB of 192 MB`, from the sizes already formatted.
-    pub download: fn(&str, &str) -> String,
     /// `Queue 3/12`.
     pub queue: fn(usize, usize) -> String,
 }
@@ -370,12 +345,6 @@ pub struct Central {
 pub struct Viewer {
     pub before: &'static str,
     pub after: &'static str,
-    /// The "after" side with the enlargement shown: `After · 2×`.
-    pub after_enlarged: fn(&str) -> String,
-    /// Over the photo while the area in view is being enlarged.
-    pub enlarging_view: &'static str,
-    /// Over the photo when the view is too wide to enlarge.
-    pub enlarge_zoom_in: &'static str,
     pub original: &'static str,
     /// `Removed noise ×4`.
     pub removed_noise: fn(f32) -> String,
@@ -426,45 +395,6 @@ pub struct Export {
     /// `Folder: D:\out`.
     pub folder: fn(&str) -> String,
     pub a_folder: &'static str,
-    pub upscale: &'static str,
-    pub upscale_none: &'static str,
-    pub upscale_x2: &'static str,
-    pub upscale_x4: &'static str,
-    pub upscale_x4_tip: &'static str,
-    pub detail_faithful: &'static str,
-    pub detail_faithful_tip: &'static str,
-    pub detail_generated: &'static str,
-    pub detail_generated_tip: &'static str,
-    pub upscale_missing: &'static str,
-    /// From the size of the result, already formatted.
-    pub upscale_result: fn(&str) -> String,
-    /// From the network, its licence and its training data.
-    pub upscale_model: fn(&str, &str, &str) -> String,
-    pub preview: &'static str,
-    pub preview_tip: &'static str,
-    pub preview_needs_denoise: &'static str,
-    pub preview_title: &'static str,
-    pub preview_computing: &'static str,
-    pub preview_before: &'static str,
-    pub preview_after: &'static str,
-    /// From what went wrong.
-    pub preview_failed: fn(&str) -> String,
-    /// The download buttons, from the size still missing.
-    pub download_faithful: fn(&str) -> String,
-    pub download_generated: fn(&str) -> String,
-    pub download_note: &'static str,
-    pub downloading: &'static str,
-    pub cancel_download: &'static str,
-    /// The estimated time of the enlargement of the open photo, from the
-    /// duration already formatted.
-    pub upscale_time: fn(&str) -> String,
-    pub upscale_time_unknown: &'static str,
-    /// Choosing the point of the enlargement preview with a click.
-    pub preview_pick: &'static str,
-    pub preview_pick_tip: &'static str,
-    /// Over the photo while a click chooses the point.
-    pub preview_picking: &'static str,
-    pub preview_computing_point: &'static str,
 }
 
 /// The keyboard shortcuts window: what each key does.
@@ -558,20 +488,6 @@ pub struct Notices {
     /// From the file name.
     pub exported: fn(&str) -> String,
     pub export_failed: fn(&str) -> String,
-    pub export_cancelled: &'static str,
-    /// From the reason the GPU was not used.
-    pub upscaler_on_cpu: fn(&str) -> String,
-    /// The enlargement of the area in view failed, with why.
-    pub view_enlarge_failed: fn(&str) -> String,
-    /// The offer at start, from the size of the download.
-    pub upscalers_offer: fn(&str) -> String,
-    pub download_models: &'static str,
-    pub no_offer: &'static str,
-    pub models_downloaded: &'static str,
-    pub models_present: &'static str,
-    pub download_cancelled: &'static str,
-    /// From what went wrong.
-    pub download_failed: fn(&str) -> String,
     pub internal_error: fn(&str) -> String,
     /// Summary of a queue run: stopped or finished, succeeded, failed.
     pub queue_summary: fn(bool, usize, usize) -> String,
@@ -604,10 +520,6 @@ pub struct Errors {
     pub permission_denied: &'static str,
     pub cancelled: &'static str,
     pub invalid_size: fn(&str) -> String,
-    /// From the memory needed and the memory free, already formatted.
-    pub not_enough_memory: fn(&str, &str) -> String,
-    /// From the least space needed and the space free, already formatted.
-    pub not_enough_disk: fn(&str, &str) -> String,
     pub out_of_range: fn(&str) -> String,
     /// The network failed, from the reason.
     pub network: fn(&str) -> String,
@@ -715,8 +627,6 @@ pub static EN: Texts = Texts {
             no_gpu_build: "This build has no GPU support",
             queue_not_running: "The queue is not being processed",
             no_files_to_process: "No files to process",
-            noise_off: "Noise reduction is switched off in the right panel",
-            nothing_to_do: "Switch on the noise reduction or choose an enlargement",
             wait_for_denoising: "Wait for the current denoising to finish",
             wait_for_queue: "Wait for the queue to finish",
             wait_for_processing: "Wait for the current processing to finish",
@@ -728,8 +638,6 @@ pub static EN: Texts = Texts {
     params: ParamsTexts {
         title: "Noise reduction",
         intro: "SCUNet neural network trained on real photos: it estimates the noise by itself.",
-        reduce_noise: "Reduce the noise",
-        reduce_noise_tip: "Off, the photo is enlarged or exported as it is, without waiting for the noise reduction",
         preset: "Preset",
         light: "Light",
         light_tip: "Removes half of the grain: natural look, full detail",
@@ -750,22 +658,10 @@ pub static EN: Texts = Texts {
         export_as: "Export as…",
         export_settings: "Settings…",
         sliders_live: "The sliders act immediately, without recomputing.",
-        enlarge: "AI enlargement",
-        enlarge_none: "None",
-        enlarge_x2: "2×",
-        enlarge_x4: "4×",
-        enlarge_tip:
-            "Enlarges the photo with a neural network when exporting; 2× is more credible than 4× on fine textures",
-        enlarge_when: "Shown on the “after” side of the photo, for the area in view; applied when exporting.",
-        enlarge_missing: "The upscaling models are not installed: download them below",
-        enlarge_options: "Options and preview…",
         denoise: "Denoise",
         finish_denoising: "Finish denoising",
         denoise_tip: |k| format!("{k} · starts from the area you are looking at"),
         exporting: "Exporting…",
-        export_enlarged: |factor| format!("Export {factor}"),
-        enlarging: "Enlarging and exporting…",
-        cancel_export: "Cancel export",
         tile_of: |done, total| format!("Tile {done} of {total}"),
         advanced: "Advanced",
         device: "Compute device",
@@ -865,7 +761,6 @@ pub static EN: Texts = Texts {
         zoom_tip: "Zoom: drag or type a value",
         loading_model: "Loading model…",
         tile: |done, total| format!("Tile {done}/{total}"),
-        download: |done, total| format!("Download {done} of {total}"),
         queue: |done, total| format!("Queue {done}/{total}"),
     },
     central: Central {
@@ -883,9 +778,6 @@ pub static EN: Texts = Texts {
     viewer: Viewer {
         before: "Before",
         after: "After",
-        after_enlarged: |factor| format!("After · {factor}"),
-        enlarging_view: "Enlarging the area in view…",
-        enlarge_zoom_in: "Zoom in to see the enlargement",
         original: "Original",
         removed_noise: |gain| format!("Removed noise ×{gain}"),
         navigator_tip: "Navigator: click or drag to move the view",
@@ -933,39 +825,6 @@ pub static EN: Texts = Texts {
         next_to_original: "Next to the original",
         folder: |d| format!("Folder: {d}"),
         a_folder: "A folder…",
-        upscale: "Enlargement",
-        upscale_none: "None: the photo keeps its size",
-        upscale_x2: "2× (more credible)",
-        upscale_x4: "4×",
-        upscale_x4_tip: "16 times the pixels: less credible than 2× on fine textures, and several times slower",
-        detail_faithful: "Faithful",
-        detail_faithful_tip: "A network trained for fidelity: it adds no detail that was not in the photo",
-        detail_generated: "Generated detail",
-        detail_generated_tip: "A GAN network invents plausible detail where the photo has none: what it draws is not \
-            the real scene. The file name ends in -gen.",
-        upscale_missing: "Upscaling models not installed: download them in the export settings",
-        upscale_result: |size| format!("Result: {size}"),
-        upscale_model: |network, licence, data| format!("{network} · licence {licence} · trained on {data}"),
-        preview: "Preview the enlargement",
-        preview_tip: "Enlarges the area at the centre of the view with the same network and settings as the export",
-        preview_needs_denoise: "Reduce the noise first: the preview shows the photo as it will be exported",
-        preview_title: "Enlargement preview",
-        preview_computing: "Enlarging the area at the centre of the view…",
-        preview_before: "Catmull-Rom",
-        preview_after: "Network",
-        preview_failed: |why| format!("The preview could not be made: {why}"),
-        download_faithful: |size| format!("Download the models ({size})"),
-        download_generated: |size| format!("Download the generated-detail models ({size})"),
-        download_note: "From the project's page on GitHub, each file checked before use; nothing else is sent.",
-        downloading: "Downloading the upscaling models…",
-        cancel_download: "Cancel download",
-        upscale_time: |d| format!("Enlargement time: about {d} on this computer"),
-        upscale_time_unknown: "Enlargement time: not measured yet (the first enlargement measures it)",
-        preview_pick: "Choose the point…",
-        preview_pick_tip: "Then click the photo where the preview should be taken; without it, the centre of the view \
-                           is used. Esc cancels.",
-        preview_picking: "Click the point to preview · Esc cancels",
-        preview_computing_point: "Enlarging the area around the chosen point…",
     },
     shortcuts: Shortcuts {
         title: "Keyboard shortcuts",
@@ -1045,21 +904,6 @@ pub static EN: Texts = Texts {
         },
         model_failed: |e| format!("The model could not be loaded: {e}."),
         exported: |name| format!("Exported “{name}”."),
-        export_cancelled: "Export cancelled: no file written.",
-        upscaler_on_cpu: |why| format!("The enlargement runs on the CPU, much more slowly: {why}"),
-        view_enlarge_failed: |why| format!("The area in view could not be enlarged: {why}"),
-        upscalers_offer: |size| {
-            format!(
-                "To enlarge photos 2× and 4×, Apsophos needs its upscaling models ({size}, downloaded once). \
-                 Press “Download the models” to download them; then choose the enlargement in the export settings."
-            )
-        },
-        download_models: "Download the models",
-        no_offer: "Don't ask again",
-        models_downloaded: "Upscaling models installed: choose 2× or 4× in the export settings.",
-        models_present: "The upscaling models are already installed.",
-        download_cancelled: "Download cancelled: the files already complete are kept.",
-        download_failed: |why| format!("The upscaling models could not be downloaded: {why}"),
         export_failed: |e| format!("Export failed: {e}. Try another folder with File › Export as…"),
         internal_error: |e| format!("An internal error occurred ({e}). Please try again."),
         queue_summary: |cancelled, ok, failed| {
@@ -1109,10 +953,6 @@ pub static EN: Texts = Texts {
         permission_denied: "access denied: the file may be open in another program, or the folder is protected",
         cancelled: "processing cancelled",
         invalid_size: |what| format!("invalid size: {what}"),
-        not_enough_memory: |need, free| {
-            format!("not enough memory: the file needs about {need}, {free} are free; choose 2×, 8 bits or PNG")
-        },
-        not_enough_disk: |need, free| format!("not enough disk space: the file needs at least {need}, {free} are free"),
         out_of_range: |v| format!("value out of range: {v}"),
         network: |why| format!("the neural network could not process the image: {why}"),
         model_missing: |path| format!("the model file does not exist: {path}"),
@@ -1209,8 +1049,6 @@ pub static IT: Texts = Texts {
             no_gpu_build: "Questa versione non supporta la GPU",
             queue_not_running: "La coda non è in elaborazione",
             no_files_to_process: "Nessun file da elaborare",
-            noise_off: "La riduzione del rumore è spenta nel pannello di destra",
-            nothing_to_do: "Accendi la riduzione del rumore o scegli un ingrandimento",
             wait_for_denoising: "Aspetta che finisca la riduzione del rumore in corso",
             wait_for_queue: "Aspetta che finisca la coda",
             wait_for_processing: "Aspetta che finisca l'elaborazione in corso",
@@ -1222,9 +1060,6 @@ pub static IT: Texts = Texts {
     params: ParamsTexts {
         title: "Riduzione del rumore",
         intro: "Rete neurale SCUNet addestrata su foto vere: stima il rumore da sola.",
-        reduce_noise: "Riduci il rumore",
-        reduce_noise_tip: "Spento, la foto si ingrandisce o si esporta così com'è, senza aspettare la riduzione del \
-                           rumore",
         preset: "Preimpostazione",
         light: "Leggera",
         light_tip: "Toglie metà della grana: aspetto naturale, tutto il dettaglio",
@@ -1246,21 +1081,10 @@ pub static IT: Texts = Texts {
         export_as: "Esporta come…",
         export_settings: "Impostazioni…",
         sliders_live: "I cursori agiscono subito, senza ricalcolare.",
-        enlarge: "Ingrandimento AI",
-        enlarge_none: "Nessuno",
-        enlarge_x2: "2×",
-        enlarge_x4: "4×",
-        enlarge_tip: "Ingrandisce la foto con una rete neurale durante l'esportazione; il 2× è più credibile del 4× sulle tessiture fini",
-        enlarge_when: "Si vede nel lato «Dopo» della foto, per la zona inquadrata; si applica all'esportazione.",
-        enlarge_missing: "I modelli di ingrandimento non sono installati: scaricali qui sotto",
-        enlarge_options: "Opzioni e anteprima…",
         denoise: "Riduci il rumore",
         finish_denoising: "Completa la riduzione",
         denoise_tip: |k| format!("{k} · comincia dalla zona che stai guardando"),
         exporting: "Esportazione…",
-        export_enlarged: |factor| format!("Esporta {factor}"),
-        enlarging: "Ingrandimento ed esportazione…",
-        cancel_export: "Annulla esportazione",
         tile_of: |done, total| format!("Riquadro {done} di {total}"),
         advanced: "Avanzate",
         device: "Dispositivo di calcolo",
@@ -1362,7 +1186,6 @@ pub static IT: Texts = Texts {
         zoom_tip: "Zoom: trascina o scrivi un valore",
         loading_model: "Caricamento del modello…",
         tile: |done, total| format!("Riquadro {done}/{total}"),
-        download: |done, total| format!("Download: {done} di {total}"),
         queue: |done, total| format!("Coda {done}/{total}"),
     },
     central: Central {
@@ -1380,9 +1203,6 @@ pub static IT: Texts = Texts {
     viewer: Viewer {
         before: "Prima",
         after: "Dopo",
-        after_enlarged: |factor| format!("Dopo · {factor}"),
-        enlarging_view: "Ingrandimento della zona inquadrata…",
-        enlarge_zoom_in: "Ingrandisci la vista per vedere l'ingrandimento",
         original: "Originale",
         removed_noise: |gain| format!("Rumore tolto ×{gain}"),
         navigator_tip: "Navigatore: fai clic o trascina per spostare la vista",
@@ -1430,42 +1250,6 @@ pub static IT: Texts = Texts {
         next_to_original: "Accanto all'originale",
         folder: |d| format!("Cartella: {d}"),
         a_folder: "Una cartella…",
-        upscale: "Ingrandimento",
-        upscale_none: "Nessuno: la foto mantiene le dimensioni",
-        upscale_x2: "2× (più credibile)",
-        upscale_x4: "4×",
-        upscale_x4_tip: "16 volte i pixel: meno credibile del 2× sulle tessiture fini, e alcune volte più lento",
-        detail_faithful: "Fedele",
-        detail_faithful_tip: "Una rete addestrata per la fedeltà: non aggiunge dettagli che non erano nella foto",
-        detail_generated: "Dettagli generati",
-        detail_generated_tip: "Una rete GAN inventa dettagli plausibili dove la foto non ne ha: ciò che disegna non \
-            è la scena reale. Il nome del file finisce con -gen.",
-        upscale_missing: "Modelli di ingrandimento non installati: scaricali dalle impostazioni di esportazione",
-        upscale_result: |size| format!("Risultato: {size}"),
-        upscale_model: |network, licence, data| format!("{network} · licenza {licence} · addestrata su {data}"),
-        preview: "Anteprima dell'ingrandimento",
-        preview_tip: "Ingrandisce la zona al centro della vista con la stessa rete e le stesse impostazioni \
-            dell'esportazione",
-        preview_needs_denoise: "Riduci prima il rumore: l'anteprima mostra la foto come verrà esportata",
-        preview_title: "Anteprima dell'ingrandimento",
-        preview_computing: "Ingrandimento della zona al centro della vista…",
-        preview_before: "Catmull-Rom",
-        preview_after: "Rete",
-        preview_failed: |why| format!("Impossibile creare l'anteprima: {why}"),
-        download_faithful: |size| format!("Scarica i modelli ({size})"),
-        download_generated: |size| format!("Scarica i modelli a dettagli generati ({size})"),
-        download_note:
-            "Dalla pagina del progetto su GitHub, ogni file controllato prima dell'uso; non si invia nient'altro.",
-        downloading: "Download dei modelli di ingrandimento…",
-        cancel_download: "Annulla download",
-        upscale_time: |d| format!("Tempo dell'ingrandimento: circa {d} su questo computer"),
-        upscale_time_unknown: "Tempo dell'ingrandimento: non ancora misurato (lo misura il primo ingrandimento)",
-        preview_pick: "Scegli il punto…",
-        preview_pick_tip:
-            "Poi fai clic sulla foto dove prendere l'anteprima; senza, si usa il centro della vista. Esc \
-                           annulla.",
-        preview_picking: "Fai clic sul punto da vedere in anteprima · Esc annulla",
-        preview_computing_point: "Ingrandimento della zona attorno al punto scelto…",
     },
     shortcuts: Shortcuts {
         title: "Scorciatoie da tastiera",
@@ -1546,22 +1330,6 @@ pub static IT: Texts = Texts {
         },
         model_failed: |e| format!("Impossibile caricare il modello: {e}."),
         exported: |name| format!("Esportato “{name}”."),
-        export_cancelled: "Esportazione annullata: nessun file scritto.",
-        upscaler_on_cpu: |why| format!("L'ingrandimento usa la CPU, molto più lenta: {why}"),
-        view_enlarge_failed: |why| format!("Impossibile ingrandire la zona inquadrata: {why}"),
-        upscalers_offer: |size| {
-            format!(
-                "Per ingrandire le foto 2× e 4× servono i modelli di ingrandimento ({size}, da scaricare una volta \
-                 sola). Premi «Scarica i modelli» per scaricarli; poi scegli l'ingrandimento nelle impostazioni di \
-                 esportazione."
-            )
-        },
-        download_models: "Scarica i modelli",
-        no_offer: "Non chiedere più",
-        models_downloaded: "Modelli di ingrandimento installati: scegli 2× o 4× nelle impostazioni di esportazione.",
-        models_present: "I modelli di ingrandimento sono già installati.",
-        download_cancelled: "Download annullato: i file già completi restano.",
-        download_failed: |why| format!("Impossibile scaricare i modelli di ingrandimento: {why}"),
         export_failed: |e| format!("Esportazione non riuscita: {e}. Prova un'altra cartella con File › Esporta come…"),
         internal_error: |e| format!("Si è verificato un errore interno ({e}). Riprova."),
         queue_summary: |cancelled, ok, failed| {
@@ -1615,14 +1383,6 @@ pub static IT: Texts = Texts {
                             protetta",
         cancelled: "elaborazione annullata",
         invalid_size: |what| format!("dimensioni non valide: {what}"),
-        not_enough_memory: |need, free| {
-            format!(
-                "memoria insufficiente: il file richiede circa {need}, ne sono liberi {free}; scegli 2×, 8 bit o PNG"
-            )
-        },
-        not_enough_disk: |need, free| {
-            format!("spazio su disco insufficiente: il file richiede almeno {need}, ne sono liberi {free}")
-        },
         out_of_range: |v| format!("valore fuori dai limiti: {v}"),
         network: |why| format!("la rete neurale non è riuscita a elaborare l'immagine: {why}"),
         model_missing: |path| format!("il file del modello non esiste: {path}"),

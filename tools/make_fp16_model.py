@@ -2,8 +2,8 @@
 
 TensorRT for RTX (and TensorRT 11) only run a network in FP16 if the model
 itself is FP16 ("strongly typed"): unlike TensorRT 10 they no longer convert
-it on their own. This script rewrites a model `<name>.onnx` (the denoiser's
-or an upscaler's) into `<name>_fp16.onnx`:
+it on their own. This script rewrites a model `<name>.onnx` into
+`<name>_fp16.onnx`:
 
 * the weights are stored in FP16 (half the size) and the convolutions and
   matrix products run in FP16, on the Tensor Cores of RTX cards;

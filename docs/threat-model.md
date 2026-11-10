@@ -20,14 +20,12 @@ Trust boundaries, from the least trusted:
 1. **Image files** (TIFF, JPEG, PNG) chosen or dropped by the user, or found
    in a folder added to the queue: anyone can have made them.
 2. **Model files** (`.onnx`) from the `models` folder or chosen by hand:
-   parsed by ONNX Runtime (C++) inside the process. The upscaling models
-   (`swinir_real_*.onnx`) are found in the same folder or in the user's
-   data folder, never chosen by hand.
-3. **The network**, only for the upscaling models, only when the user
-   presses the button that downloads them: an HTTPS answer from GitHub.
-4. **DLLs** loaded at run time: ONNX Runtime, DirectML, TensorRT for RTX.
-5. **The settings file** written by eframe in the user's data folder.
-6. **The release pipeline** (GitHub Actions): what reaches the users.
+   parsed by ONNX Runtime (C++) inside the process.
+3. **DLLs** loaded at run time: ONNX Runtime, DirectML, TensorRT for RTX.
+4. **The settings file** written by eframe in the user's data folder.
+5. **The release pipeline** (GitHub Actions): what reaches the users.
+
+The program makes no network access.
 
 ## 2. What can go wrong? (STRIDE, CIA-T)
 
@@ -39,9 +37,6 @@ Trust boundaries, from the least trusted:
 | Image | A crafted name or metadata makes the export write outside its folder or over the original | Tampering |
 | Image | Metadata shown in the interface as text that looks like a program message | Spoofing |
 | Model | A crafted `.onnx` exploits the ONNX Runtime parser | Elevation |
-| Network | A forged or altered model arrives instead of the published one (attacker on the network, compromised release) | Tampering, elevation |
-| Network | The download never ends, or fills the disk | Denial of service |
-| Network | The request tells someone what the user does | Information disclosure |
 | DLL | A planted `DirectML.dll` or `onnxruntime*.dll` in a searched folder is loaded instead | Elevation |
 | Settings | A damaged settings file stops the program from starting | Denial of service |
 | Release | A compromised action or dependency ships malicious code | Tampering |
@@ -68,41 +63,16 @@ Trust boundaries, from the least trusted:
   (`output_path` steps around it).
 - **Format from content**, not from the extension.
 - **Models:** only files the user put in the program's `models` folder or
-  chose by hand, and the upscaling models the user downloaded.
-- **Download of the upscaling models:** only when the user presses the
-  button (an invitation at start says so; it can be turned off); from one
-  fixed HTTPS address (the project's release `models-1`), HTTPS only,
-  through Windows' own TLS and certificate store; each file must have the
-  size and SHA-256 compiled into the program (`models/upscalers.txt`),
-  otherwise it is deleted and refused, so a forged file never reaches ONNX
-  Runtime; no more bytes than expected are read; time limits on connection,
-  answer and transfer; Cancel at any time; the file is written beside its
-  name and renamed durably. An interrupted download resumes from its
-  partial file (`.<name>.part`, locked while in use, so two windows never
-  write it together) with an HTTP `Range` request; the SHA-256 covers the
-  whole file, the part already on disk included, so a partial file altered
-  on disk is refused like a forged download; a partial file larger than the
-  model, a server that does not answer with exactly the rest of the file,
-  or a wrong hash make it start again from the first byte (a wrong hash
-  once, then the file is refused and deleted). The request carries the
-  program's name and version and, when resuming, the byte it resumes from;
-  nothing about the user. No other network access.
+  chose by hand.
 - **Weights for the models** are converted by the tools in `tools/`, which
   read only tensors from a checkpoint (any other pickled object is
-  refused). The upscaler's converter accepts only the four SwinIR files
-  whose SHA-256 it knows (`tools/export_upscaler_model.py`).
-- **Large outputs:** an enlarged export checks the format's limits, the
-  memory its writer needs and the free disk space before any work, and is
-  written through the same temporary file and durable rename as the rest.
+  refused).
 - **DLLs:** the first thing `main` does is restrict the search for DLLs
   loaded by name (by ONNX Runtime and its providers too) to the program's
   folder and System32 (`SetDefaultDllDirectories`): the current folder and
   the `PATH` are never searched. The DLLs ship next to the executable.
 - **Settings:** an unreadable file falls back to the defaults.
-- **Release:** the downloadable models are built by a workflow run by
-  hand (`models.yml`), which checks them against `models/upscalers.txt`
-  before attaching them to a draft release published by hand;
-  read-only workflow tokens, actions pinned to commit hashes,
+- **Release:** read-only workflow tokens, actions pinned to commit hashes,
   `cargo deny` (advisories, yanked crates, licences, sources) in every
   check, Dependabot with a week's cooldown, draft releases published by
   hand, optional code signing. The local check and the CI run the same
@@ -125,7 +95,7 @@ Trust boundaries, from the least trusted:
 - **Model files are not verified by hash:** a model chosen by hand is
   trusted like a document the user opens; the official models are made
   locally from weights whose SHA-256 is checked
-  (`tools/export_onnx_model.py`, `tools/export_upscaler_model.py`). The
+  (`tools/export_onnx_model.py`). The
   program does not check the models of its own folder either: their
   SHA-256 is in the release's `SHA256SUMS.txt`, for a check by hand.
 - **Logs hold file paths:** they stay on the user's computer, in the user's

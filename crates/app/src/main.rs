@@ -4,8 +4,6 @@
 mod app;
 mod color;
 mod document;
-mod download;
-mod enlarged_view;
 mod errors;
 mod files;
 mod format;
@@ -24,7 +22,6 @@ mod theme;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
-mod upscaling;
 mod viewer;
 mod worker;
 

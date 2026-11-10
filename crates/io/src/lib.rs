@@ -314,9 +314,8 @@ pub fn write(
 }
 
 /// The rows of an image to write, from the top: the whole image at once, or
-/// band by band when it is produced that way (an enlargement, which may not
-/// fit in memory as a whole).
-pub trait BandSource {
+/// band by band when it is produced that way.
+pub(crate) trait BandSource {
     /// What producing a band can fail with; writing errors convert into it.
     type Error: From<IoError>;
 
@@ -336,7 +335,7 @@ pub trait BandSource {
 
 /// Some whole rows of an image: RGB, and alpha (one sample per pixel) when
 /// the source has it.
-pub struct Band<'a> {
+pub(crate) struct Band<'a> {
     pub rgb: &'a Image,
     pub alpha: Option<&'a [f32]>,
 }
@@ -381,7 +380,7 @@ impl BandSource for WholeImage<'_> {
 ///
 /// # Errors
 /// The source's error, or an [`IoError`] (limits, encoding, disk).
-pub fn write_from<S: BandSource>(
+pub(crate) fn write_from<S: BandSource>(
     path: &Path,
     source: &mut S,
     info: &SourceInfo,
@@ -403,7 +402,7 @@ pub fn write_from<S: BandSource>(
 ///
 /// # Errors
 /// [`IoError::TooLarge`] or [`IoError::FileTooLarge`].
-pub fn check_output(
+fn check_output(
     width: usize,
     height: usize,
     has_alpha: bool,
@@ -558,7 +557,7 @@ mod tests {
         }
     }
 
-    /// An image handed over in bands of `rows` rows, as an enlargement is.
+    /// An image handed over in bands of `rows` rows.
     struct Split<'a> {
         rgb: &'a Image,
         alpha: Option<&'a [f32]>,
@@ -633,7 +632,7 @@ mod tests {
             check_output(65_536, 100, false, &info(FileFormat::Jpeg, BitDepth::U8), &opts),
             Err(IoError::TooLarge { format: "JPEG", .. })
         ));
-        // 24 MP enlarged 4 times: fine in 16 bit, over 4 GB in floating point
+        // 384 MP: fine in 16 bit, over 4 GB in floating point
         let tiff16 = info(FileFormat::Tiff, BitDepth::U16);
         assert!(check_output(24_000, 16_000, false, &tiff16, &opts).is_ok());
         assert!(matches!(

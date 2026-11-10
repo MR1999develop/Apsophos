@@ -3,13 +3,11 @@
 //! network removes too little or too much of it. Such tiles are converted to
 //! sRGB before the network and only the correction it makes is brought back,
 //! so the result keeps the photo's own colour space and profile, and colours
-//! outside sRGB are not clipped. For an upscaler the correction is measured
-//! against the classical enlargement (Catmull-Rom) of the same tile.
+//! outside sRGB are not clipped.
 //!
 //! Photos without a profile, with an sRGB profile, with a grey profile or
 //! with a profile that cannot be used go to the network as they are.
 
-use denoise_core::resample::enlarge;
 use denoise_core::{ModelError, TileModel};
 use lcms2::{ColorSpaceSignature, Intent, PixelFormat, Profile, Transform};
 
@@ -93,14 +91,10 @@ impl TileModel for InSrgb<'_> {
         self.model.margin_px()
     }
 
-    fn scale(&self) -> usize {
-        self.model.scale()
-    }
-
     fn run(&mut self, planar_in: &[f32], planar_out: &mut [f32]) -> Result<(), ModelError> {
-        let (side, scale) = (self.model.input_px(), self.model.scale());
+        let side = self.model.input_px();
         let n = side * side;
-        if planar_in.len() != 3 * n || planar_out.len() != 3 * n * scale * scale {
+        if planar_in.len() != 3 * n || planar_out.len() != 3 * n {
             return Err(ModelError("tile buffers of unexpected sizes".into()));
         }
         interleave(planar_in, &mut self.source);
@@ -115,24 +109,17 @@ impl TileModel for InSrgb<'_> {
         }
         deinterleave(&self.srgb, &mut self.planar);
         self.model.run(&self.planar, planar_out)?;
-        // correction = network output − its input (enlarged classically for
-        // an upscaler), both taken back to the photo's space with the same
-        // conversion, so that its rounding cancels
-        let n_out = n * scale * scale;
-        if scale > 1 {
-            let up = |px: &[[f32; 3]]| enlarge(px.as_flattened(), side, side, 3, scale).as_chunks::<3>().0.to_vec();
-            self.srgb = up(&self.srgb);
-            self.source = up(&self.source);
-        }
+        // correction = network output − its input, both taken back to the
+        // photo's space with the same conversion, so that its rounding cancels
         interleave(planar_out, &mut self.back);
         let network = std::mem::take(&mut self.back);
-        self.back.resize(n_out, [0.0; 3]);
+        self.back.resize(n, [0.0; 3]);
         self.space.from_srgb.transform_pixels(&network, &mut self.back);
-        self.base.resize(n_out, [0.0; 3]);
+        self.base.resize(n, [0.0; 3]);
         self.space.from_srgb.transform_pixels(&self.srgb, &mut self.base);
         for (i, ((src, out), base)) in self.source.iter().zip(&self.back).zip(&self.base).enumerate() {
             for c in 0..3 {
-                planar_out[c * n_out + i] = src[c] + out[c] - base[c];
+                planar_out[c * n + i] = src[c] + out[c] - base[c];
             }
         }
         Ok(())
@@ -245,44 +232,6 @@ mod tests {
         let grey = [fake.seen[0], fake.seen[4], fake.seen[8]];
         assert!(grey.iter().all(|v| (v - grey[0]).abs() < 1e-3), "{grey:?}");
         assert!((grey[0] - 0.5).abs() > 0.001 && (grey[0] - 0.5).abs() < 0.05, "{grey:?}");
-    }
-
-    /// An "upscaler" that enlarges with Catmull-Rom: it adds no detail.
-    struct Classical;
-
-    impl TileModel for Classical {
-        fn input_px(&self) -> usize {
-            2
-        }
-        fn margin_px(&self) -> usize {
-            0
-        }
-        fn scale(&self) -> usize {
-            2
-        }
-        fn run(&mut self, planar_in: &[f32], planar_out: &mut [f32]) -> Result<(), ModelError> {
-            let mut px = Vec::new();
-            interleave(planar_in, &mut px);
-            let big = enlarge(px.as_flattened(), 2, 2, 3, 2);
-            let mut planar = Vec::new();
-            deinterleave(big.as_chunks::<3>().0, &mut planar);
-            planar_out.copy_from_slice(&planar);
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn an_enlargement_without_detail_is_the_classical_one_of_the_photo() {
-        let space = NetworkSpace::for_profile(Some(&adobe_rgb())).unwrap();
-        let mut out = [0.0; 48];
-        InSrgb::new(&mut Classical, &space).run(&TILE, &mut out).unwrap();
-        let mut px = Vec::new();
-        interleave(&TILE, &mut px);
-        let mut expected = Vec::new();
-        deinterleave(enlarge(px.as_flattened(), 2, 2, 3, 2).as_chunks::<3>().0, &mut expected);
-        for (o, e) in out.iter().zip(&expected) {
-            assert!((o - e).abs() < 1e-4, "{out:?} vs {expected:?}");
-        }
     }
 
     #[test]

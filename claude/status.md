@@ -1,24 +1,35 @@
 # Apsophos — status of the work
 
 Updated on November 5, 2026 (language and workflow rows on November 7,
-release rows on November 8, the blocks of November 9). It is where work
+release rows on November 8, the blocks of November 9 and 10). It is where work
 resumes: last checked commit, work in progress, open points, decisions.
 Small postponed things are in `TIDY.md`.
 
 ## Last checked commit
 
-- Branch `independent-steps-2026-11-09` (November 9, after `0aa13a9`):
-  noise reduction and enlargement are independent. A *Reduce the noise*
-  switch in the right panel (`ExportSettings::reduce_noise`, on by
-  default); off, the view, the preview, Export and the queue enlarge the
-  photo as it was opened, without denoising it first, the sliders are
-  disabled and the file name carries only `_2x`/`_4x`. With neither step,
-  Export and the queue say there is nothing to do. Checked with the real
-  networks by `enlarged_view_without_noise_reduction` (ignored test,
-  screenshot `target/screenshots/enlarged-only.png`). Before it, on the
-  same day: `b02082b` (the enlargement chosen in the right panel) and
-  `0aa13a9` (the viewer shows the enlargement of the area in view,
-  decision 2 of `docs/decisions/0001-ai-upscaling.md`).
+- Branch `remove-upscaling-2026-11-10` (November 10, owner's request):
+  the AI enlargement is removed altogether. Gone: the SwinIR upscaler
+  (`denoise_engine::Upscaler`), `denoise_core::upscale` and `resample`,
+  the scale of `TileModel`, the app's `upscaling`, `enlarged_view` and
+  `download` modules, the choice in the right panel and in the export
+  settings, the before/after preview window, the enlargement in the view,
+  the *Reduce the noise* switch (it existed only to enlarge without
+  denoising), the download of the models (and the `ureq` and `sha2`
+  dependencies), the start notice offering them, the enlargement part of
+  the self-test, `tools/export_upscaler_model.py`, `swinir_graph.py`,
+  `swinir_reference.py`, `models/upscalers.txt`, the *Models* workflow and
+  ADR `docs/decisions/0001-ai-upscaling.md`; the threat model no longer has
+  a network boundary (the program makes no network access). Settings
+  saved by the versions with the enlargement load (the unknown fields are
+  dropped). Kept: the band writer inside `denoise_io` (now private, see
+  `TIDY.md`), the format limits checked before writing, the EXIF pixel
+  dimensions of the file written, and the F6 fix (*Pause* while the queue
+  runs). Not touched: the `models-1` release on GitHub and the models
+  already downloaded to `%LOCALAPPDATA%\Apsophos\models`.
+- Before (November 9): `c901bf0` (`package.bat` calls Windows' `tar` and
+  PowerShell by full path), `55ef66f` (noise reduction and enlargement
+  independent), `0aa13a9` and `b02082b` (the enlargement in the view and
+  in the right panel), all superseded by the removal.
 - `main` @ `101b71a` (November 9): four blocks, each made by a separate
   agent in its own worktree, then rebased on `main` one at a time, checked
   with `scripts\check.bat` (all green: tests in release and in debug,
@@ -524,9 +535,9 @@ on November 2 (branch `instructions-2026-11-02`).
 
 - **Release 0.1.0** (November 8): the *Release* run of tag `v0.1.0`
   (`6a3fb95`) made the draft with the DirectML zip and installer; the
-  *Models* run made the `models-1` draft. Both drafts are published by
-  the owner; until `models-1` is published the in-app download fails. The
-  blocks of November 9 come after the tag and go in the next version.
+  *Models* run made the `models-1` draft (the enlargement models, no
+  longer used since November 10). The blocks of November 9 and 10 come
+  after the tag and go in the next version.
 - **SCUNet regenerated with the new builder:** the graph now uses 4-D
   attention (same result to the last bit on the CPU, with fake weights).
   The models in `models\` are still the old ones; the release workflow
@@ -558,13 +569,6 @@ on November 2 (branch `instructions-2026-11-02`).
   do not fit in GPU memory and are skipped). Since November 2 in FP16:
   1.1–2.2 s/MP, about 32 s for 24 MP (1216 px tiles; 1600 skipped).
 - CPU: 17–28 s/MP.
-- Enlargement (November 5, self-test, 1024 × 768 for the whole PNG export):
-  - TensorRT for RTX FP16: 2× 12.3 s per input megapixel (a 12 MP photo in
-    about 2.5 min), 4× 26 s (12 MP in about 5 min); model load 4–5 s with
-    the saved engines, about 30 s the first time.
-  - DirectML FP16 (small tiles): 2× 47 s/MP, 4× 100 s/MP (12 MP in about
-    20 min).
-  - CPU: not measured in the self-test (a 640 px 2× tile takes about 40 s).
 
 ## Decisions
 
@@ -575,9 +579,8 @@ on November 2 (branch `instructions-2026-11-02`).
   `main`, tags and releases are pushed by the owner.
 - Status and TIDY in English (November 7), like everything that goes to
   GitHub; only Claude's instructions stay in Italian.
-- Enlargement models outside the installer: the program downloads them
-  after start, only when the user presses the button, and verifies them
-  with the compiled SHA-256 values (November 5).
+- No AI enlargement (November 10, owner's request): the program only
+  reduces noise; the enlargement of November 5–9 was removed.
 - Interface in a Windows 11 style shared with another project (fonts,
   icons, sizes, components), but always dark and in greys (November 2).
 - No choice of the monitor's ICC profile (removed on October 26): the

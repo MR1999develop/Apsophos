@@ -1,20 +1,17 @@
 //! Right panel: presets, sliders, the primary action, advanced options,
 //! image information and histogram.
 
-use denoise_core::upscale::{Detail, Factor, Upscale};
 use denoise_core::{num, Preset};
 use denoise_engine::Device;
 use eframe::egui::{self, pos2, vec2, Button, RichText, Sense, Shape, Stroke};
 
 use crate::app::*;
-use crate::download;
 use crate::format::{self, file_name, truncate_middle};
 use crate::inspect::BINS;
 use crate::text::tr;
 use crate::theme::*;
 
 use super::present::Primary;
-use super::windows::{download_block, DownloadAction};
 use super::*;
 
 impl ApsophosApp {
@@ -32,19 +29,9 @@ impl ApsophosApp {
                     ui.add_space(SPACE_XS);
                     ui.label(weak(tx.intro, &t));
                     ui.add_space(SPACE_M);
-                    let mut reduce = self.settings.export.reduce_noise;
-                    if widgets::checkbox(ui, &mut reduce, tx.reduce_noise).on_hover_text(tx.reduce_noise_tip).changed()
-                    {
-                        self.set_reduce_noise(reduce);
-                    }
-                    ui.add_space(SPACE_S);
-                    ui.add_enabled_ui(reduce, |ui| {
-                        self.presets(ui, &t);
-                        ui.add_space(SPACE_M);
-                        self.sliders(ui, &t);
-                    });
+                    self.presets(ui, &t);
                     ui.add_space(SPACE_M);
-                    self.enlargement(ui, &t);
+                    self.sliders(ui, &t);
                     ui.add_space(SPACE_L);
                     self.primary(ui, &t);
                     ui.add_space(SPACE_L);
@@ -106,50 +93,6 @@ impl ApsophosApp {
         }
     }
 
-    /// The AI enlargement, the export setting chosen where the other
-    /// choices of the photo are: none, 2× or 4×. A factor without its model
-    /// on disk is disabled, and the download is offered below; the variant,
-    /// the estimate and the preview are in the export settings.
-    pub(super) fn enlargement(&mut self, ui: &mut egui::Ui, t: &Tokens) {
-        let tx = &tr().params;
-        let files = self.upscaler_files_now();
-        let faithful = |factor| Upscale { factor, detail: Detail::Faithful };
-        let have = |u: Upscale| !denoise_engine::upscaler_files(&files, u).is_empty();
-        ui.label(weak(tx.enlarge, t)).on_hover_text(tx.enlarge_tip);
-        ui.add_space(SPACE_XS);
-        let current = self.settings.export.upscale;
-        let mut choice = current;
-        ui.horizontal(|ui| {
-            if ui.selectable_label(current.is_none(), tx.enlarge_none).clicked() {
-                choice = None;
-            }
-            for (factor, label) in [(Factor::X2, tx.enlarge_x2), (Factor::X4, tx.enlarge_x4)] {
-                let selected = current.is_some_and(|u| u.factor == factor);
-                let r = ui.add_enabled_ui(have(faithful(factor)), |ui| ui.selectable_label(selected, label)).inner;
-                if r.on_hover_text(tx.enlarge_tip).on_disabled_hover_text(tx.enlarge_missing).clicked() {
-                    // the variant chosen in the export settings stays, if it has its model
-                    let wanted = Upscale { factor, detail: current.map_or(Detail::Faithful, |u| u.detail) };
-                    choice = Some(if have(wanted) { wanted } else { faithful(factor) });
-                }
-            }
-        });
-        self.settings.export.upscale = choice;
-        ui.label(weak(tx.enlarge_when, t));
-        let running = self.download.as_ref().map(|d| (d.done, d.total));
-        let missing = !download::missing(download::Pack::Faithful, &files).is_empty();
-        if running.is_some() || missing {
-            ui.add_space(SPACE_XS);
-            match download_block(ui, t, &files, running) {
-                Some(DownloadAction::Start(pack)) => self.start_download(pack),
-                Some(DownloadAction::Cancel) => self.cancel_download(),
-                None => {}
-            }
-        }
-        if ui.link(tx.enlarge_options).clicked() {
-            self.open_export_settings();
-        }
-    }
-
     pub(super) fn primary(&mut self, ui: &mut egui::Ui, t: &Tokens) {
         let tx = &tr().params;
         let full = vec2(ui.available_width(), CONTROL_HEIGHT);
@@ -175,12 +118,9 @@ impl ApsophosApp {
                 }
             }
             Primary::Export => {
-                // the enlargement, a default of the export, is said on the button
-                let label = match self.settings.export.upscale {
-                    Some(u) => (tx.export_enlarged)(&format!("{}×", u.factor.value())),
-                    None => tx.export.to_owned(),
-                };
-                if wide(ui, primary_button(ui, &label)).on_hover_text((tx.export_tip)(&keys(ui, &SC_EXPORT))).clicked()
+                if wide(ui, primary_button(ui, tx.export))
+                    .on_hover_text((tx.export_tip)(&keys(ui, &SC_EXPORT)))
+                    .clicked()
                 {
                     self.export();
                 }
@@ -194,9 +134,7 @@ impl ApsophosApp {
                         self.open_export_settings();
                     }
                 });
-                if self.settings.export.reduce_noise {
-                    ui.label(weak(tx.sliders_live, t));
-                }
+                ui.label(weak(tx.sliders_live, t));
             }
             Primary::Denoise { resume } => {
                 let label = if resume { tx.finish_denoising } else { tx.denoise };
@@ -206,20 +144,7 @@ impl ApsophosApp {
                 }
             }
         }
-        if let Some(run) = &self.upscaling {
-            // minutes of work: progress, time left and a way out
-            ui.add_space(SPACE_S);
-            ui.label(weak(tx.enlarging, t));
-            if run.total == 0 {
-                ui.spinner();
-            } else {
-                ui.add(egui::ProgressBar::new(format::fraction(run.done, run.total)).desired_width(full.x));
-                ui.label(weak(format::tile_progress(run.started.elapsed(), run.done, run.total), t));
-            }
-            if wide(ui, Button::new(tx.cancel_export).min_size(full)).clicked() {
-                self.cancel_export();
-            }
-        } else if self.exporting {
+        if self.exporting {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(weak(tx.exporting, t));
@@ -301,7 +226,7 @@ impl ApsophosApp {
 
     /// Luma histogram: the original filled, the result as a line.
     pub(super) fn histogram(&mut self, ui: &mut egui::Ui, t: &Tokens) {
-        let params = self.applied_params();
+        let params = self.settings.params;
         let Some(doc) = self.doc.as_mut() else { return };
         ui.add_space(SPACE_M);
         let tx = &tr().params;

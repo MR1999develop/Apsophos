@@ -7,22 +7,14 @@ use crate::{num, DenoiseError, Image, ModelError, PixelRect};
 ///
 /// The input tile is planar (CHW: all red, then green, then blue),
 /// `3 × input_px × input_px` values in 0..=1; the output has the same layout
-/// and `scale` times the side: `3 × (scale · input_px)²` values. The
-/// `margin_px` input pixels along each edge (`scale · margin_px` output
-/// pixels) are discarded, because the network computes them without enough
-/// context.
+/// and size. The `margin_px` pixels along each edge are discarded, because
+/// the network computes them without enough context.
 pub trait TileModel {
     /// Side of the input tile, in pixels.
     fn input_px(&self) -> usize;
 
     /// Input pixels discarded along each edge.
     fn margin_px(&self) -> usize;
-
-    /// How many times larger the output is than the input, per side: 1 for a
-    /// denoiser, 2 or 4 for an upscaler.
-    fn scale(&self) -> usize {
-        1
-    }
 
     /// Processes one tile.
     ///
@@ -200,8 +192,7 @@ pub struct TileOutput<'a> {
     pub total: usize,
     /// The useful rectangle, in input pixels.
     pub rect: PixelRect,
-    /// Network output for `rect`: `rect.width × rect.height` times the
-    /// model's scale.
+    /// Network output for `rect`.
     pub pixels: &'a Image,
 }
 
@@ -214,8 +205,7 @@ pub struct TileOutput<'a> {
 /// # Errors
 /// [`DenoiseError::Cancelled`] if `control` is cancelled,
 /// [`DenoiseError::Model`] if the network fails,
-/// [`DenoiseError::InvalidSize`] if `plan` does not match `img` or `model`,
-/// or the model's scale is 0.
+/// [`DenoiseError::InvalidSize`] if `plan` does not match `img` or `model`.
 pub fn run_tiles(
     img: &Image,
     model: &mut dyn TileModel,
@@ -230,22 +220,16 @@ pub fn run_tiles(
     if (plan.input_px, plan.margin_px) != (model.input_px(), model.margin_px()) {
         return Err(DenoiseError::InvalidSize("the tile plan does not match the model".into()));
     }
-    let scale = model.scale();
-    if scale == 0 {
-        return Err(DenoiseError::InvalidSize("model with a scale of 0".into()));
-    }
     let n = plan.input_px;
-    let out_n = n.checked_mul(scale).ok_or_else(|| DenoiseError::InvalidSize("tile too large".into()))?;
     let mut input = vec![0.0f32; 3 * n * n];
-    let mut output = vec![0.0f32; 3 * out_n * out_n];
+    let mut output = vec![0.0f32; 3 * n * n];
     let total = order.len();
     for (k, &index) in order.iter().enumerate() {
         control.checkpoint()?;
         let rect = plan.rect(index);
         gather_planar(img, rect, plan.margin_px, n, &mut input);
         model.run(&input, &mut output)?;
-        let scaled = PixelRect::new(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
-        let pixels = scatter_interleaved(&output, out_n, plan.margin_px * scale, scaled);
+        let pixels = scatter_interleaved(&output, n, plan.margin_px, rect);
         on_tile(TileOutput { index, done: k + 1, total, rect, pixels: &pixels });
     }
     control.checkpoint()

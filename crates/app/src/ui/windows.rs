@@ -1,15 +1,11 @@
 //! Windows: preferences, export settings, keyboard shortcuts, about.
 
-use std::path::PathBuf;
-
 use denoise_core::product;
-use denoise_core::upscale::{Detail, Factor, Upscale};
 use denoise_io::ExportFormat;
 use eframe::egui::{self, vec2, KeyboardShortcut, RichText, Slider};
 
 use crate::app::*;
-use crate::download::{self, Pack};
-use crate::format::{self, truncate_middle};
+use crate::format::truncate_middle;
 use crate::settings::Destination;
 use crate::text::{self, tr, Language};
 use crate::theme::*;
@@ -64,16 +60,6 @@ impl ApsophosApp {
         self.windows.preferences = open;
 
         let mut open = self.windows.export;
-        // the models on disk decide what can be chosen (read again at each
-        // opening and after a download)
-        let files = if open { self.upscaler_files_now() } else { Vec::new() };
-        let denoised = self.ready_doc().is_some();
-        let mut want_preview = false;
-        let running = self.download.as_ref().map(|d| (d.done, d.total));
-        // the estimate needs the settings while the export part of them is borrowed
-        let timings = self.settings.upscale_timings.clone();
-        let device = self.settings.engine.device;
-        let mut download_action = None;
         widgets::dialog(ctx, te.title).open(&mut open).resizable(false).show(ctx, |ui| {
             let e = &mut self.settings.export;
             ui.label(weak(te.format, &t));
@@ -101,16 +87,6 @@ impl ApsophosApp {
             ui.add(egui::TextEdit::singleline(&mut e.suffix).desired_width(SHORT_FIELD_W));
             ui.label(weak((te.suffix_example)(&e.suffix), &t));
             ui.add_space(SPACE_M);
-            let size = self.doc.as_ref().map(|d| (d.width(), d.height()));
-            let speed = |u| crate::settings::upscale_speed(&timings, u, device);
-            upscale_choice(ui, &t, &mut e.upscale, size, &files, &speed);
-            download_action = download_block(ui, &t, &files, running);
-            if e.upscale.is_some() && size.is_some() {
-                let r = ui.add_enabled(denoised, egui::Button::new(te.preview));
-                let r = r.on_hover_text(te.preview_tip).on_disabled_hover_text(te.preview_needs_denoise);
-                want_preview |= r.clicked();
-            }
-            ui.add_space(SPACE_M);
             ui.label(weak(te.destination, &t));
             let mut same = e.destination == Destination::SameAsSource;
             if ui.radio_value(&mut same, true, te.next_to_original).clicked() {
@@ -129,16 +105,6 @@ impl ApsophosApp {
             });
         });
         self.windows.export = open;
-        if want_preview {
-            // from the export settings: the centre of the view, the default
-            self.preview_upscale(None);
-        }
-        match download_action {
-            Some(DownloadAction::Start(pack)) => self.start_download(pack),
-            Some(DownloadAction::Cancel) => self.cancel_download(),
-            None => {}
-        }
-        self.ui_upscale_preview(ctx);
 
         let mut open = self.windows.shortcuts;
         let single_keys_off = self.settings.single_keys_off;
@@ -179,9 +145,7 @@ impl ApsophosApp {
         // the model folders are read once per opening, not on every frame
         let models = if open {
             let settings = &self.settings;
-            self.model_list
-                .get_or_insert_with(|| crate::model_list::list(&settings.denoiser_files(), &settings.upscaler_files()))
-                .clone()
+            self.model_list.get_or_insert_with(|| crate::model_list::list(&settings.denoiser_files())).clone()
         } else {
             self.model_list = None;
             Vec::new()
@@ -201,78 +165,6 @@ impl ApsophosApp {
                 .show(ui, |ui| model_cards(ui, &t, &models));
         });
         self.windows.about = open;
-    }
-}
-
-impl ApsophosApp {
-    /// The before/after preview: the export's tile at 1:1, Catmull-Rom left
-    /// of the divider and the network right of it.
-    fn ui_upscale_preview(&mut self, ctx: &egui::Context) {
-        let te = &tr().export;
-        let t = self.tokens;
-        let mut open = self.windows.upscale_preview;
-        let transform = self.doc.as_ref().map(|d| d.display.shared_transform());
-        let denoised = self.ready_doc().is_some();
-        let (picking, at_point) = (self.picking_preview_point, self.preview_point.is_some());
-        let mut pick = false;
-        widgets::dialog(ctx, te.preview_title).open(&mut open).resizable(true).show(ctx, |ui| {
-            // the point: the centre of the view by default, or one clicked
-            let r = ui.add_enabled(denoised, egui::Button::new(te.preview_pick).selected(picking));
-            pick = r.on_hover_text(te.preview_pick_tip).on_disabled_hover_text(te.preview_needs_denoise).clicked();
-            ui.add_space(SPACE_S);
-            match &mut self.preview {
-                UpscalePreview::None => {}
-                UpscalePreview::Computing => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        let what = if at_point { te.preview_computing_point } else { te.preview_computing };
-                        ui.label(weak(what, &t));
-                    });
-                }
-                UpscalePreview::Failed(e) => {
-                    ui.label(RichText::new(symbol::with(symbol::WARNING, (te.preview_failed)(e))).color(t.warning));
-                }
-                UpscalePreview::Ready { upscale, preview, textures, split } => {
-                    let Some(transform) = &transform else { return };
-                    let (before, after) = textures.get_or_insert_with(|| {
-                        let load = |name: &str, img| {
-                            ui.ctx().load_texture(name, crate::viewer::color_image(img, transform), Default::default())
-                        };
-                        (load("preview-before", &preview.classical), load("preview-after", &preview.network))
-                    });
-                    let factor = format!("{}×", upscale.factor.value());
-                    let r = preview.rect;
-                    let area = format!("x {}–{}, y {}–{}", r.x, r.right(), r.y, r.bottom());
-                    ui.label(weak(format!("{} ← | → {} · {factor} · {area}", te.preview_before, te.preview_after), &t));
-                    ui.add(Slider::new(split, 0.0..=1.0).show_value(false));
-                    egui::ScrollArea::both().max_height(ui.ctx().content_rect().height() * 0.7).show(ui, |ui| {
-                        let size = after.size_vec2();
-                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                        ui.painter().image(after.id(), rect, uv, egui::Color32::WHITE);
-                        let mut left = rect;
-                        left.set_right(rect.left() + rect.width() * *split);
-                        let left_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(*split, 1.0));
-                        ui.painter().image(before.id(), left, left_uv, egui::Color32::WHITE);
-                        ui.painter().vline(left.right(), rect.y_range(), egui::Stroke::new(1.0, t.accent));
-                    });
-                }
-            }
-        });
-        if pick {
-            // the button again leaves the choice, as Esc does
-            if picking {
-                self.picking_preview_point = false;
-            } else {
-                self.pick_preview_point();
-            }
-        }
-        if !open {
-            // closed: the textures and the choice of a point go with it
-            self.preview = UpscalePreview::None;
-            self.picking_preview_point = false;
-        }
-        self.windows.upscale_preview = open;
     }
 }
 
@@ -308,97 +200,4 @@ fn model_cards(ui: &mut egui::Ui, t: &Tokens, models: &[crate::model_list::Liste
             }
         });
     }
-}
-
-/// What the download part of the export settings asks for.
-pub(super) enum DownloadAction {
-    Start(Pack),
-    Cancel,
-}
-
-/// The upscaling models still to download: a button with the size for the
-/// faithful ones, and, once those are there, one for the generated-detail
-/// ones (never both at once: generated detail is a choice of its own).
-/// While a download runs: its progress and Cancel.
-pub(super) fn download_block(
-    ui: &mut egui::Ui,
-    t: &Tokens,
-    files: &[PathBuf],
-    running: Option<(u64, u64)>,
-) -> Option<DownloadAction> {
-    let te = &tr().export;
-    if let Some((done, total)) = running {
-        ui.label(weak(te.downloading, t));
-        #[expect(clippy::cast_precision_loss, reason = "a fraction for the bar")]
-        let fraction = if total == 0 { 0.0 } else { done as f32 / total as f32 };
-        let text = (tr().status.download)(&format::bytes(done), &format::bytes(total));
-        ui.add(egui::ProgressBar::new(fraction).text(text));
-        return ui.button(te.cancel_download).clicked().then_some(DownloadAction::Cancel);
-    }
-    let missing = |pack| download::missing(pack, files).iter().map(|e| e.size).sum::<u64>();
-    let (faithful, generated) = (missing(Pack::Faithful), missing(Pack::Generated));
-    let (pack, label) = if faithful > 0 {
-        (Pack::Faithful, (te.download_faithful)(&format::bytes(faithful)))
-    } else if generated > 0 {
-        (Pack::Generated, (te.download_generated)(&format::bytes(generated)))
-    } else {
-        return None;
-    };
-    let clicked = ui.button(label).clicked();
-    ui.label(weak(te.download_note, t));
-    clicked.then_some(DownloadAction::Start(pack))
-}
-
-/// The enlargement in the export settings: none, 2× or 4×, and faithful or
-/// generated detail; what has no model on disk is disabled, with the reason.
-/// Below: the size of the result for the open photo, how long it should take
-/// at the speed `speed` measured for the choice, and the model's card.
-fn upscale_choice(
-    ui: &mut egui::Ui,
-    t: &Tokens,
-    choice: &mut Option<Upscale>,
-    size: Option<(usize, usize)>,
-    files: &[PathBuf],
-    speed: &dyn Fn(Upscale) -> Option<denoise_engine::UpscaleSpeed>,
-) {
-    let te = &tr().export;
-    let have = |u: Upscale| !denoise_engine::upscaler_files(files, u).is_empty();
-    let detail = choice.map_or(Detail::Faithful, |u| u.detail);
-    ui.label(weak(te.upscale, t));
-    let mut factor = choice.map(|u| u.factor);
-    ui.radio_value(&mut factor, None, te.upscale_none);
-    for (f, label) in [(Factor::X2, te.upscale_x2), (Factor::X4, te.upscale_x4)] {
-        let available = have(Upscale { factor: f, detail: Detail::Faithful });
-        let r = ui.add_enabled(available, egui::RadioButton::new(factor == Some(f), label));
-        let r = if available { r } else { r.on_disabled_hover_text(te.upscale_missing) };
-        let r = if f == Factor::X4 { r.on_hover_text(te.upscale_x4_tip) } else { r };
-        if r.clicked() {
-            factor = Some(f);
-        }
-    }
-    *choice = factor.map(|factor| Upscale { factor, detail });
-    let Some(mut u) = *choice else { return };
-    ui.horizontal(|ui| {
-        ui.add_space(SPACE_M);
-        ui.radio_value(&mut u.detail, Detail::Faithful, te.detail_faithful).on_hover_text(te.detail_faithful_tip);
-        let generated = Upscale { detail: Detail::Generated, ..u };
-        let r =
-            ui.add_enabled(have(generated), egui::RadioButton::new(u.detail == Detail::Generated, te.detail_generated));
-        if r.on_hover_text(te.detail_generated_tip).on_disabled_hover_text(te.upscale_missing).clicked() {
-            u.detail = Detail::Generated;
-        }
-    });
-    *choice = Some(u);
-    if u.detail == Detail::Generated {
-        ui.label(RichText::new(symbol::with(symbol::WARNING, te.detail_generated_tip)).color(t.warning));
-    }
-    if let Some((w, h)) = size {
-        let f = u.factor.value();
-        let text = format!("{} × {} px ({})", format::int(w * f), format::int(h * f), format::megapixels(w * f, h * f));
-        ui.label(weak((te.upscale_result)(&text), t));
-        let secs = speed(u).and_then(|s| s.estimate(w, h));
-        ui.label(weak(format::upscale_estimate(secs), t));
-    }
-    let card = denoise_engine::card(u);
-    ui.label(weak((te.upscale_model)(card.network, card.licence, card.training_data), t));
 }

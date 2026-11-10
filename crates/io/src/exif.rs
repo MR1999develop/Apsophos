@@ -1,7 +1,7 @@
 //! Changes made in place to an EXIF block before it goes into an output
 //! file: the Orientation tag (0x0112), because the pixels are already
 //! rotated, and the pixel dimensions of the EXIF sub-IFD (`PixelXDimension`,
-//! `PixelYDimension`), because the output may be enlarged or rotated.
+//! `PixelYDimension`), because the output may be rotated.
 //!
 //! An EXIF block is structured like a TIFF: a header with the byte order, then
 //! the first IFD with 12-byte entries, which may point to the EXIF sub-IFD.
