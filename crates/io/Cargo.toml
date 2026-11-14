@@ -14,7 +14,7 @@ thiserror.workspace = true
 serde.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "rayon"] }
 tiff = "0.9"
-jpeg-encoder = "0.6"
+jpeg-encoder = "0.7"
 # PNG writing with EXIF, XMP and resolution (the `image` encoder writes none)
 png = "0.18"
 # the MD5 that names the extended XMP of a JPEG
